@@ -138,9 +138,28 @@ def main():
              "Joy can read 8 pages of a book in 20 minutes. How many hours will it take her to read 120 pages?",
              "Randy has 60 mango trees on his farm. He also has 5 less than half as many coconut trees as mango trees. How many trees does Randy have in all on his farm?"]
 
+   
+    prompts = [
+        
+         """Generate the SQL for this
+
+Schema:
+CREATE TABLE cotton_source (brand VARCHAR(255), country VARCHAR(255), quantity INT); INSERT INTO cotton_source (brand, country, quantity) VALUES ('BrandA', 'USA', 1500), ('BrandB', 'USA', 2000), ('BrandC', 'China', 1000);
+
+Question:
+What is the total quantity of cotton sourced from the United States by brands that have committed to fair labor practices?
+
+Output format (json):
+    - query: <add final result here>
+    - explanation: <add your explanation here; step by step reasoning>
+
+"""
+        
+    ]
     # Add special tokens for the Instruct model. The Base model does not require the following two lines.
     messages = [{"role": "user", "content": prompt} for prompt in prompts]
     prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
+    
 
     encoded_outputs = tokenizer(
         prompts,
@@ -151,7 +170,7 @@ def main():
     input_ids = encoded_outputs['input_ids'].to(device)
     attention_mask = encoded_outputs['attention_mask'].to(device)
 
-    out = generate(model, input_ids, attention_mask, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
+    out = generate(model, input_ids, attention_mask, steps=128, gen_length=256, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     for o in output:
         print(o)
