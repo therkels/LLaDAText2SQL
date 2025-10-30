@@ -139,13 +139,17 @@ def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
         instance_id = entry['instance_id']
         instruction = entry['instruction']
         context = entry['external_knowledge']
+        # context holds the name of the document file in path_to_documents
+        with open(f"{path_to_documents}/{context}", 'r') as doc_f:
+            context = doc_f.read()
         # generate from context and instruction
         output = text_to_sql(model, tokenizer, context, instruction)
+        print(f"Generated output for instance {instance_id}:\n{output[0]}\n")
         # extract sql from output
         parsed_output = json.loads(extract_first_json(output[0]))
         sql_query = parsed_output.get("query", "")
         # save to submission folder
-        print(f"Output for instance {instance_id}:\n\n {sql_query}")
+        print(f"Generated SQL query for instance {instance_id}:\n{sql_query}\n")
         with open(f"{path_to_output_sql}/{instance_id}.sql", 'w') as out_f:
             out_f.write(sql_query)
 
