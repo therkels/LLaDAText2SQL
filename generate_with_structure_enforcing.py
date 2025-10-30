@@ -3,6 +3,7 @@ import numpy as np
 import torch.nn.functional as F
 
 from transformers import AutoTokenizer, AutoModel
+import json
 
 
 def add_gumbel_noise(logits, temperature):
@@ -109,16 +110,49 @@ def generate(model, input_ids, attention_mask=None, steps=128, temperature=0.,
 
     return x
 
+def extract_first_json(text):
+    start = text.find('{')
+    if start == -1:
+        return None
 
-def main():
+    stack = []
+    for i, ch in enumerate(text[start:], start):
+        if ch == '{':
+            stack.append(ch)
+        elif ch == '}':
+            stack.pop()
+            if not stack:
+                return text[start:i+1]  # return the full {...}
+    return None  # if unmatched
+
+def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
-    
-    mask_id = 126336 # The LLaDA mask token ID
 
     model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
+    with open(path_to_json, 'r') as f:
+        data = [json.loads(line) for line in f]
+
+    for entry in data:
+        instance_id = entry['instance_id']
+        instruction = entry['instruction']
+        context = entry['external_knowledge']
+        # generate from context and instruction
+        output = text_to_sql(model, tokenizer, context, instruction)
+        # extract sql from output
+        parsed_output = json.loads(extract_first_json(output[0]))
+        sql_query = parsed_output.get("query", "")
+        # save to submission folder
+        print(f"Output for instance {instance_id}:\n\n {sql_query}")
+        with open(f"{path_to_output_sql}/{instance_id}.sql", 'w') as out_f:
+            out_f.write(sql_query)
+
+
+def text_to_sql(model, tokenizer, context, instruction, gen_length_query=512, gen_length_explanation=512):
+    mask_id = 126336 # The LLaDA mask token ID
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
     if tokenizer.padding_side != 'left':
@@ -135,13 +169,7 @@ def main():
 
     # --- This is the new prompt format for your text-to-SQL task ---
     # Combine the system instruction, schema, and question into one string.
-    text_to_sql_prompt = """Generate the SQL for this
-
-Schema:
-CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');
-
-Question:
-What is the total volume of timber sold by each salesperson, sorted by salesperson?"""
+    text_to_sql_prompt = f"Generate the SQL for this\n\nSchema:\n{context}\n\nQuestion:\n{instruction}"
 
     # --- Construct the full input with the JSON template and masks ---
     
@@ -184,9 +212,27 @@ What is the total volume of timber sold by each salesperson, sorted by salespers
     print("\n--- Generated Output (Full) ---")
     # Decode the *entire* output tensor to see the filled-in template
     output = tokenizer.batch_decode(out, skip_special_tokens=True)
+    return output
+
+def main():
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+
+    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+
+    output = text_to_sql(
+        model, 
+        tokenizer, 
+        context="CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');",
+        instruction="What is the total volume of timber sold by each salesperson, sorted by salesperson?"
+    )
     for o in output:
         print(o)
         print('-' * 50)
 
 if __name__ == '__main__':
-    main()
+    # main()
+    generate_spider_sql('/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl', 
+                        '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/',
+                        '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
