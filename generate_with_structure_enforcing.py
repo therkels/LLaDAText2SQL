@@ -125,6 +125,147 @@ def extract_first_json(text):
                 return text[start:i+1]  # return the full {...}
     return None  # if unmatched
 
+class SpiderDataset(torch.utils.data.Dataset):
+    '''
+    Dataset class for Spider dataset that preloads all data into memory and prepares prompts for LLM.
+    '''
+    def __init__(self, path_to_json, path_to_documents, tokenizer, device='cuda', 
+                 gen_length_query=512, gen_length_explanation=512):
+        self.path_to_documents = path_to_documents
+        self.tokenizer = tokenizer
+        self.device = device
+        self.gen_length_query = gen_length_query
+        self.gen_length_explanation = gen_length_explanation
+        self.mask_id = 126336  # The LLaDA mask token ID
+        
+        # Set up tokenizer
+        if tokenizer.padding_side != 'left':
+            tokenizer.padding_side = 'left'
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        assert tokenizer.pad_token_id != self.mask_id, "Pad token ID cannot be the same as Mask ID"
+        
+        # Load all data at initialization
+        with open(path_to_json, 'r') as f:
+            self.data = [json.loads(line) for line in f]
+            
+        # Preload all document contexts
+        self.contexts = {}
+        for entry in self.data:
+            print(entry.get('external_knowledge', 'No external_knowledge field found'))
+            doc_name = entry['external_knowledge']
+            if doc_name not in self.contexts:
+                with open(f"{path_to_documents}/{doc_name}", 'r') as doc_f:
+                    self.contexts[doc_name] = doc_f.read()
+                    
+        # Pre-tokenize the JSON template parts
+        self.template_parts = {
+            'start': tokenizer('{\n  "query": "', add_special_tokens=False, return_tensors="pt").input_ids.to(device),
+            'middle': tokenizer('",\n  "explanation": "', add_special_tokens=False, return_tensors="pt").input_ids.to(device),
+            'end': tokenizer('"\n}', add_special_tokens=False, return_tensors="pt").input_ids.to(device)
+        }
+    
+    def prepare_prompt(self, context, instruction):
+        """Prepare the prompt with proper formatting and tokenization."""
+        # Format the text-to-SQL prompt
+        text_to_sql_prompt = f"Generate the SQL for this\n\nSchema:\n{context}\n\nQuestion:\n{instruction}"
+        
+        # Apply chat template
+        messages = [{"role": "user", "content": text_to_sql_prompt}]
+        formatted_prompt = self.tokenizer.apply_chat_template(
+            messages, 
+            add_generation_prompt=True, 
+            tokenize=False
+        )
+        
+        # Tokenize the prompt
+        prefix_tokens = self.tokenizer(
+            formatted_prompt, 
+            add_special_tokens=False, 
+            return_tensors="pt"
+        ).input_ids.to(self.device)
+        
+        # Create mask tensors
+        masks1 = torch.full(
+            (1, self.gen_length_query), 
+            self.mask_id, 
+            dtype=torch.long, 
+            device=self.device
+        )
+        masks2 = torch.full(
+            (1, self.gen_length_explanation), 
+            self.mask_id, 
+            dtype=torch.long, 
+            device=self.device
+        )
+        
+        # Concatenate all parts
+        input_ids = torch.cat([
+            prefix_tokens,
+            self.template_parts['start'],
+            masks1,
+            self.template_parts['middle'],
+            masks2,
+            self.template_parts['end']
+        ], dim=1)
+        
+        # Create attention mask
+        attention_mask = torch.ones_like(input_ids)
+        
+        return input_ids, attention_mask
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        entry = self.data[idx]
+        context = self.contexts[entry['external_knowledge']]
+        input_ids, attention_mask = self.prepare_prompt(context, entry['instruction'])
+        
+        return {
+            'instance_id': entry['instance_id'],
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'raw_instruction': entry['instruction'],
+            'raw_context': context
+        }
+
+def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch_size=32):
+    '''
+    Preprocess the Spider dataset to generate SQL queries using the LLaDA model.
+    Args:
+        path_to_json: Path to the Spider JSONL file.
+        path_to_documents: Path to the folder containing database schema documents.
+        path_to_output_sql: Path to the folder to save generated SQL queries.
+        batch_size: Batch size for the dataloader.
+    '''
+    # Create dataset
+    dataset = SpiderDataset(path_to_json, path_to_documents, tokenizer=AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True))
+    
+    # Create dataloader
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=4
+    )
+    
+    # Process batches
+    for batch in dataloader:
+        for instance_id, instruction, context in zip(
+            batch['instance_id'], 
+            batch['instruction'], 
+            batch['context']
+        ):
+            print(f"Processing instance {instance_id}")
+            print("Context:", context)
+            print("Instruction:", instruction)
+            print("-" * 80)
+        break  # Remove this break when ready to process all data
+
+    print(len(dataset))
+
+    
 def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
@@ -222,8 +363,8 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True, dtype=torch.bfloat16).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
 
     output = text_to_sql(
         model, 
@@ -237,6 +378,12 @@ def main():
 
 if __name__ == '__main__':
     # main()
-    generate_spider_sql('/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl', 
-                        '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/',
-                        '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
+    t2s_instruction = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl'
+    document_context = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/'
+    # Oh yeah, doing some local saves so nobody cheats :)
+    output_sql_folder = '/home/CSE595/LLaDATextToSQL/spider_sql_outputs/'
+    # generate_spider_sql('/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl', 
+    #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/',
+    #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
+    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
+    preprocess_spider(t2s_instruction, document_context, output_sql_folder)
