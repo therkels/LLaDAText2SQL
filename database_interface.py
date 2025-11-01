@@ -8,7 +8,7 @@ load_dotenv()
 class DatabaseHelper():
     def __init__(self, db_name):
         self.__db_name = db_name
-        self__conn = None
+        self.__conn = None
 
     def __enter__(self):
         self.__conn = sqlite3.connect(self.__db_name)
@@ -20,17 +20,29 @@ class DatabaseHelper():
             self.__conn.close()
 
     def insert_data(self, DDL_query):
-        with self as cursor:
-            split_queries = DDL_query.strip().split(';')
-            for query in split_queries:
-                if query.strip():
-                    cursor.execute(query)
-
+        try:
+            with self as cursor:
+                split_queries = DDL_query.strip().split(';')
+                for idx, query in enumerate(split_queries):
+                    # check if table was already created
+                    if idx == 0:
+                        print(f"QUERY:{query}")
+                    if query.strip():
+                        cursor.execute(query)
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}, skipping insertion")
     def fetch_data(self, DML_query):
         with self as cursor:
             cursor.execute(DML_query)
             df = pd.DataFrame(cursor.fetchall())
             return df
+    def does_table_exist(self, table_name: str) -> bool:
+        with self as cursor:
+            cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?;",
+                (table_name,)
+            )
+            return cursor.fetchone() is not None
 
 def example_usage():
     db_helper = DatabaseHelper('example.db')
@@ -52,8 +64,10 @@ def example_usage():
 if __name__ == "__main__":
     # example_usage()
     base_path = os.getenv("DB_DIR", None)
-    print(base_path)
     if not base_path:
         raise ValueError("Error: DB_DIR environment variable not set. Please set it in the .env file.")
     new_db = DatabaseHelper(os.path.join(base_path, 'test_database.db'))
-
+    new_db.insert_data('CREATE TABLE test_table (id INT, value TEXT); INSERT INTO test_table (id, value) VALUES (1, "Sample1"), (2, "Sample2");')
+    df = new_db.fetch_data('SELECT * FROM test_table;')
+    print(df)
+    # print(new_db.does_table_exist('fff'))
