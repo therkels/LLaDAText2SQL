@@ -350,8 +350,10 @@ def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+    # id = 'LLaDA-8B-Instruct'
+    id = 'LLaDA-1.5'
+    model = AutoModel.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True)
 
     with open(path_to_json, 'r') as f:
         data = [json.loads(line) for line in f]
