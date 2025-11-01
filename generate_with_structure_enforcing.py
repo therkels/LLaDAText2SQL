@@ -116,8 +116,10 @@ def main():
     
     mask_id = 126336 # The LLaDA mask token ID
 
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+    # id = 'LLaDA-8B-Instruct'
+    id = 'LLaDA-1.5'
+    model = AutoModel.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True)
 
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
