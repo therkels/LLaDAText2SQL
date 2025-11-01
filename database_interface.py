@@ -1,5 +1,8 @@
 import sqlite3
 import pandas as pd
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
 
 class DatabaseHelper():
@@ -29,7 +32,6 @@ class DatabaseHelper():
             df = pd.DataFrame(cursor.fetchall())
             return df
 
-
 def example_usage():
     db_helper = DatabaseHelper('example.db')
 
@@ -47,6 +49,11 @@ def example_usage():
     # Convert to DataFrame for better visualization
     print(results)
 
-
 if __name__ == "__main__":
-    example_usage()
+    # example_usage()
+    base_path = os.getenv("DB_DIR", None)
+    print(base_path)
+    if not base_path:
+        raise ValueError("Error: DB_DIR environment variable not set. Please set it in the .env file.")
+    new_db = DatabaseHelper(os.path.join(base_path, 'test_database.db'))
+
