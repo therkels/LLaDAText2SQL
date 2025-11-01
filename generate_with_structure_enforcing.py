@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 from transformers import AutoTokenizer, AutoModel
 import json
+import re
+import pandas as pd
 
 
 def add_gumbel_noise(logits, temperature):
@@ -107,6 +109,85 @@ def generate(model, input_ids, attention_mask=None, steps=128, temperature=0.,
             _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
             transfer_index[j, select_index] = True
         x[transfer_index] = x0[transfer_index]
+
+    return x
+
+@ torch.no_grad()
+def generate_original(model, prompt, attention_mask=None, steps=128, gen_length=128, block_length=128, temperature=0.,
+             cfg_scale=0., remasking='low_confidence', mask_id=126336, logits_eos_inf=False, confidence_eos_eot_inf=False):
+    '''
+    Args:
+        model: Mask predictor.
+        prompt: A tensor of shape (1, L).
+        steps: Sampling steps, less than or equal to gen_length.
+        gen_length: Generated answer length.
+        block_length: Block length, less than or equal to gen_length. If less than gen_length, it means using semi_autoregressive remasking.
+        temperature: Categorical distribution sampling temperature.
+        cfg_scale: Unsupervised classifier-free guidance scale.
+        remasking: Remasking strategy. 'low_confidence' or 'random'.
+        mask_id: The toke id of [MASK] is 126336.
+        logits_eos_inf: Whether to set the logits of EOS token to -inf. See Appendix B.4 of LLaDA for details
+        confidence_eos_eot_inf: Whether to set the confidence of EOS and EoT token to -inf. See Appendix B.4 of LLaDA for details
+    '''
+    x = torch.full((prompt.shape[0], prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
+    x[:, :prompt.shape[1]] = prompt.clone()
+
+    if attention_mask is not None:
+        attention_mask = torch.cat([attention_mask, torch.ones((prompt.shape[0], gen_length), dtype=attention_mask.dtype, device=model.device)], dim=-1)
+
+    prompt_index = (x != mask_id)
+
+    assert gen_length % block_length == 0
+    num_blocks = gen_length // block_length
+
+    assert steps % num_blocks == 0
+    steps = steps // num_blocks
+
+    for num_block in range(num_blocks):
+        block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
+        num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
+        for i in range(steps):
+            mask_index = (x == mask_id)
+            if cfg_scale > 0.:
+                un_x = x.clone()
+                un_x[prompt_index] = mask_id
+                x_ = torch.cat([x, un_x], dim=0)
+                if attention_mask is not None:
+                    attention_mask_ = torch.cat([attention_mask, attention_mask], dim=0)
+                logits = model(x_, attention_mask=attention_mask_).logits
+                logits, un_logits = torch.chunk(logits, 2, dim=0)
+                logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+            else:
+                logits = model(x, attention_mask=attention_mask).logits
+
+            if logits_eos_inf:
+                logits[:, :, 126081] = -torch.inf
+
+            logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
+            x0 = torch.argmax(logits_with_noise, dim=-1) # b, l
+            
+            if confidence_eos_eot_inf:
+                logits_with_noise[:, :, 126081] = logits[:, :, 126348] = -torch.inf
+
+            if remasking == 'low_confidence':
+                p = F.softmax(logits, dim=-1)
+                x0_p = torch.squeeze(
+                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1) # b, l
+            elif remasking == 'random':
+                x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
+            else:
+                raise NotImplementedError(remasking)
+
+            x0_p[:, prompt.shape[1] + (num_block + 1) * block_length:] = -np.inf
+
+            x0 = torch.where(mask_index, x0, x)
+            confidence = torch.where(mask_index, x0_p, -np.inf)
+
+            transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
+            for j in range(confidence.shape[0]):
+                _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
+                transfer_index[j, select_index] = True
+            x[transfer_index] = x0[transfer_index]
 
     return x
 
@@ -264,7 +345,6 @@ def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch
         break  # Remove this break when ready to process all data
 
     print(len(dataset))
-
     
 def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -294,8 +374,42 @@ def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
         with open(f"{path_to_output_sql}/{instance_id}.sql", 'w') as out_f:
             out_f.write(sql_query)
 
+def parse_sql(output):
+    pat = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
 
-def text_to_sql(model, tokenizer, context, instruction, gen_length_query=512, gen_length_explanation=512):
+    def first_in(s: str):
+        m = pat.search(s)
+        return m.group(1) if m else None
+
+    if isinstance(output, str):
+        return first_in(output)
+
+    # assume list/tuple of strings
+    for s in output:
+        r = first_in(s)
+        if r is not None:
+            return r
+    return None
+
+def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device=None):
+    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+
+    if model is None or tokenizer is None:
+        model = AutoModel.from_pretrained(
+            'GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16
+        ).to(device).eval()
+        tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
+
+    df = pd.DataFrame(columns=["id", "out_sql"])
+
+    for _id, context, prompt in zip(ids, contexts, prompts):
+        out_list = text_to_sql(model, tokenizer, context, prompt) 
+        sql = parse_sql(out_list)
+        df.loc[len(df)] = [_id, sql]
+
+    return df
+
+def text_to_sql_structured(model, tokenizer, context, instruction, gen_length_query=512, gen_length_explanation=512):
     mask_id = 126336 # The LLaDA mask token ID
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
@@ -359,12 +473,47 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length_query=512, ge
     output = tokenizer.batch_decode(out, skip_special_tokens=True)
     return output
 
+def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    prompts = [f"""Given a schema and prompt, generate the SQL. 
+                  Wrap your SQL in between <sql> and </sql> tags. 
+                  Only the SQL in between first set of sql tags will be considered. 
+                  \n\nSchema:\n{context}\n\nPrompt:\n{instruction}"""]
+                  
+    # The LLaDA architecture theoretically supports both left-padding and right-padding. 
+    # However, the sampling code implementation is simpler with left-padding.
+    if tokenizer.padding_side != 'left':
+        tokenizer.padding_side = 'left'
+
+    # If the padding ID equals the mask ID, you need to modify our generate function to achieve correct inference.
+    assert tokenizer.pad_token_id != 126336
+
+    # Add special tokens for the Instruct model. The Base model does not require the following two lines.
+    messages = [{"role": "user", "content": prompt} for prompt in prompts]
+    prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
+
+    encoded_outputs = tokenizer(
+        prompts,
+        add_special_tokens=False,
+        padding=True,
+        return_tensors="pt"
+    )
+    input_ids = encoded_outputs['input_ids'].to(device)
+    attention_mask = encoded_outputs['attention_mask'].to(device)
+    out = generate_original(model, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
+    output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+    print(output)
+    parsed_sql = parse_sql(output)
+    return parsed_sql
+
+
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
 
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True, dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
+    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
+    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
     output = text_to_sql(
         model, 
@@ -372,18 +521,17 @@ def main():
         context="CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');",
         instruction="What is the total volume of timber sold by each salesperson, sorted by salesperson?"
     )
-    for o in output:
-        print(o)
-        print('-' * 50)
+    print(output)
 
 if __name__ == '__main__':
     # main()
-    t2s_instruction = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl'
-    document_context = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/'
-    # Oh yeah, doing some local saves so nobody cheats :)
-    output_sql_folder = '/home/CSE595/LLaDATextToSQL/spider_sql_outputs/'
-    # generate_spider_sql('/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl', 
-    #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/',
-    #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
-    preprocess_spider(t2s_instruction, document_context, output_sql_folder)
+    # t2s_instruction = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl'
+    # document_context = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/'
+    # # Oh yeah, doing some local saves so nobody cheats :)
+    # output_sql_folder = '/home/CSE595/LLaDATextToSQL/spider_sql_outputs/'
+    # # generate_spider_sql('/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/spider2-snow.jsonl', 
+    # #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/resource/documents/',
+    # #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
+    # tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
+    # preprocess_spider(t2s_instruction, document_context, output_sql_folder)
+    main()
