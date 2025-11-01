@@ -6,9 +6,10 @@ from transformers import AutoTokenizer, AutoModel
 import json
 import re
 import pandas as pd
-from dataset.synthetic_text_to_sql.get_raw_data import get_raw_data, convert_data_to_namedtuples
+# from dataset.synthetic_text_to_sql.get_raw_data import get_raw_data, convert_data_to_namedtuples
 import time
 import os
+from datasets import load_dataset
 
 def add_gumbel_noise(logits, temperature):
     '''
@@ -394,7 +395,7 @@ def parse_sql(output):
     r = [first_in(s) for s in output]
     return r
 
-def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
+def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
     device = "cuda"
 
     if model is None or tokenizer is None:
@@ -421,7 +422,11 @@ def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device
         os.replace(tmp, save_path)
 
     try:
-        for i, (_id, context, prompt) in enumerate(zip(ids, contexts, prompts), 1):
+
+        for i,instance in enumerate(dataset):
+            context = instance['sql_context']
+            prompt = instance['sql_prompt']
+            _id = instance['id']
             sql = text_to_sql(model, tokenizer, context, prompt)
             df.loc[len(df)] = [_id, sql]
             if save_path and autosave_every and (i % autosave_every == 0):
@@ -567,9 +572,13 @@ if __name__ == '__main__':
     # tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
     # preprocess_spider(t2s_instruction, document_context, output_sql_folder)
     # main()
-    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/synthetic_text_to_sql_test.snappy.parquet"
-    data = get_raw_data(file_path)
-    examples = convert_data_to_namedtuples(data)
-    df_output = generate_eval_sql(data['id'], data['sql_context'], data['sql_prompt'], save_path="output_sql.csv")
+    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
+    retrieved_dataset = load_dataset("json", data_files=file_path)
+    test_dataset = retrieved_dataset['train']
+    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv")
+
+    for example in test_dataset:
+        print(example)
+        break
 
 

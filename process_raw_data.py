@@ -104,7 +104,7 @@ if __name__ == "__main__":
     print(retrieved_dataset)
     
     print("\nFirst example from the *retrieved* dataset:")
-    print(retrieved_dataset['train'][0])
+    print(retrieved_dataset[0])
 
     print("length of retrieved dataset:", len(retrieved_dataset['train']))
         
