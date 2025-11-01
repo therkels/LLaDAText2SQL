@@ -6,7 +6,9 @@ from transformers import AutoTokenizer, AutoModel
 import json
 import re
 import pandas as pd
-
+from dataset.synthetic_text_to_sql.get_raw_data import get_raw_data, convert_data_to_namedtuples
+import time
+import os
 
 def add_gumbel_noise(logits, temperature):
     '''
@@ -129,6 +131,8 @@ def generate_original(model, prompt, attention_mask=None, steps=128, gen_length=
         logits_eos_inf: Whether to set the logits of EOS token to -inf. See Appendix B.4 of LLaDA for details
         confidence_eos_eot_inf: Whether to set the confidence of EOS and EoT token to -inf. See Appendix B.4 of LLaDA for details
     '''
+    start = time.time()
+    print(f"start: {time.time() - start}")
     x = torch.full((prompt.shape[0], prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
     x[:, :prompt.shape[1]] = prompt.clone()
 
@@ -142,7 +146,7 @@ def generate_original(model, prompt, attention_mask=None, steps=128, gen_length=
 
     assert steps % num_blocks == 0
     steps = steps // num_blocks
-
+    print(f"1: {time.time() - start}")
     for num_block in range(num_blocks):
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
         num_transfer_tokens = get_num_transfer_tokens(block_mask_index, steps)
@@ -188,7 +192,7 @@ def generate_original(model, prompt, attention_mask=None, steps=128, gen_length=
                 _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j, i])
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
-
+    print(f"end: {time.time() - start}")
     return x
 
 def extract_first_json(text):
@@ -311,7 +315,7 @@ class SpiderDataset(torch.utils.data.Dataset):
             'raw_context': context
         }
 
-def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch_size=32):
+def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch_size=1):
     '''
     Preprocess the Spider dataset to generate SQL queries using the LLaDA model.
     Args:
@@ -347,7 +351,7 @@ def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch
     print(len(dataset))
     
 def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda'
     print(f"Using device: {device}")
 
     # id = 'LLaDA-8B-Instruct'
@@ -387,14 +391,11 @@ def parse_sql(output):
         return first_in(output)
 
     # assume list/tuple of strings
-    for s in output:
-        r = first_in(s)
-        if r is not None:
-            return r
-    return None
+    r = [first_in(s) for s in output]
+    return r
 
-def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device=None):
-    device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
+    device = "cuda"
 
     if model is None or tokenizer is None:
         model = AutoModel.from_pretrained(
@@ -404,16 +405,40 @@ def generate_eval_sql(ids, contexts, prompts, model=None, tokenizer=None, device
 
     df = pd.DataFrame(columns=["id", "out_sql"])
 
-    for _id, context, prompt in zip(ids, contexts, prompts):
-        out_list = text_to_sql(model, tokenizer, context, prompt) 
-        sql = parse_sql(out_list)
-        df.loc[len(df)] = [_id, sql]
+    # for i in range(len(ids)//batch_size + 1):
+    #     idx = batch_size * i
+    #     id_batch = ids[idx: idx+batch_size]
+    #     context_batch = contexts[idx: idx+batch_size]
+    #     prompts_batch = prompts[idx: idx+batch_size]
+    #     sql = text_to_sql(model, tokenizer, context_batch, prompts_batch)
+    #     for j in range(len(id_batch)):
+    #         df.loc[len(df)] = [id_batch[j], sql[j]]
 
+    def atomic_save():
+        if not save_path: return
+        tmp = save_path + ".tmp"
+        df.to_csv(tmp, index=False)
+        os.replace(tmp, save_path)
+
+    try:
+        for i, (_id, context, prompt) in enumerate(zip(ids, contexts, prompts), 1):
+            sql = text_to_sql(model, tokenizer, context, prompt)
+            df.loc[len(df)] = [_id, sql]
+            if save_path and autosave_every and (i % autosave_every == 0):
+                atomic_save()
+    except Exception as e:
+        # catch-all for anything else
+        print(f"Unexpected error: {e}")
+        raise
+    finally:
+        if save_path:
+            print("Saving results")
+            df.to_csv(save_path, index=False)
     return df
 
 def text_to_sql_structured(model, tokenizer, context, instruction, gen_length_query=512, gen_length_explanation=512):
     mask_id = 126336 # The LLaDA mask token ID
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda'
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
     if tokenizer.padding_side != 'left':
@@ -476,12 +501,16 @@ def text_to_sql_structured(model, tokenizer, context, instruction, gen_length_qu
     return output
 
 def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    prompts = [f"""Given a schema and prompt, generate the SQL. 
-                  Wrap your SQL in between <sql> and </sql> tags. 
-                  Only the SQL in between first set of sql tags will be considered. 
-                  \n\nSchema:\n{context}\n\nPrompt:\n{instruction}"""]
+    device = 'cuda'
+    print("building prompts")
+  # build flat prompts
+    prompts = [
+            "Given a schema and prompt, generate the SQL.\n"
+            "Wrap your SQL in <sql>...</sql>.\n"
+            "Only the first SQL block will be considered.\n\n"
+            f"Schema:\n{context}\n\nPrompt:\n{instruction}"
+    ]
+    print(prompts)
                   
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
@@ -503,6 +532,7 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
     )
     input_ids = encoded_outputs['input_ids'].to(device)
     attention_mask = encoded_outputs['attention_mask'].to(device)
+    print("Starting Generation")
     out = generate_original(model, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     print(output)
@@ -511,7 +541,7 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
 
 
 def main():
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda'
     print(f"Using device: {device}")
 
     model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
@@ -536,4 +566,10 @@ if __name__ == '__main__':
     # #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
     # tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
     # preprocess_spider(t2s_instruction, document_context, output_sql_folder)
-    main()
+    # main()
+    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/synthetic_text_to_sql_test.snappy.parquet"
+    data = get_raw_data(file_path)
+    examples = convert_data_to_namedtuples(data)
+    df_output = generate_eval_sql(data['id'], data['sql_context'], data['sql_prompt'], save_path="output_sql.csv")
+
+
