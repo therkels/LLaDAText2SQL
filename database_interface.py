@@ -49,10 +49,11 @@ class DatabaseHelper():
                 # Get column names for the DataFrame
                 cols = [column[0] for column in cursor.description]
                 df = pd.DataFrame(cursor.fetchall(), columns=cols)
-                return df
-        except sqlite3.Error as e:
-            print(f"An error occurred: {e}, returning empty DataFrame")
-            return None
+                return df, "success"
+        except Exception as e:
+            # print(f"An error occurred: {e}, returning empty DataFrame")
+            # print(f"DEBUG: SQL that caused ERROR:\n{DML_query}")
+            return pd.DataFrame(), "failure"
     
     def has_data(self, DML_query):
         try:
