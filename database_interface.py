@@ -51,7 +51,7 @@ class DatabaseHelper():
                 df = pd.DataFrame(cursor.fetchall(), columns=cols)
                 return df, "success"
         except Exception as e:
-            # print(f"An error occurred: {e}, returning empty DataFrame")
+            print(f"An error occurred: {e}, returning empty DataFrame")
             # print(f"DEBUG: SQL that caused ERROR:\n{DML_query}")
             return pd.DataFrame(), "failure"
     
