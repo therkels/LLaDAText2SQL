@@ -4,7 +4,7 @@ from typing import Iterator
 from tqdm import tqdm
 from database_interface import DatabaseHelper
 import json
-from datasets import load_dataset
+from datasets import load_dataset, Dataset, load_from_disk
 
 SyntheticTextToSQLExample = namedtuple(
     "SyntheticTextToSQLExample",
@@ -44,19 +44,19 @@ def convert_data_to_namedtuples(data: pd.DataFrame) -> Iterator[SyntheticTextToS
     Returns:
         list[SyntheticTextToSQLExample]: A list of namedtuples representing each example.
     """
-    for row in data.itertuples():
+    for row in data:
         yield SyntheticTextToSQLExample(
-            id=row.id,
-            domain=row.domain,
-            domain_description=row.domain_description,
-            sql_complexity=row.sql_complexity,
-            sql_complexity_description=row.sql_complexity_description,
-            sql_task_type=row.sql_task_type,
-            sql_task_type_description=row.sql_task_type_description,
-            sql_prompt=row.sql_prompt,
-            sql_context=row.sql_context,
-            sql=row.sql,
-            sql_explanation=row.sql_explanation,
+            id=row['id'],
+            domain=row['domain'],
+            domain_description=row['domain_description'],
+            sql_complexity=row['sql_complexity'],
+            sql_complexity_description=row['sql_complexity_description'],
+            sql_task_type=row['sql_task_type'],
+            sql_task_type_description=row['sql_task_type_description'],
+            sql_prompt=row['sql_prompt'],
+            sql_context=row['sql_context'],
+            sql=row['sql'],
+            sql_explanation=row['sql_explanation'],
         )
 
 
@@ -75,36 +75,26 @@ def valid_columns():
         "sql_explanation",
     ]
 
-
-if __name__ == "__main__":
-    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/synthetic_text_to_sql_test.snappy.parquet"
-    output_file = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
-    data = get_raw_data(file_path)
-
-    with open(output_file, 'w') as f: 
-        for example in tqdm(convert_data_to_namedtuples(data), total=len(data)):
+def sql_instance_generator():
+    data = load_dataset("gretelai/synthetic_text_to_sql")["train"]
+    for example in tqdm(convert_data_to_namedtuples(data), total=len(data)):
             db_obj = DatabaseHelper(":memory:")
             db_obj.insert_data(example.sql_context)
             # print(example.sql)
             if db_obj.has_data(example.sql):
-                # print("adding example")
-                
-                # 1. Convert the namedtuple to a dictionary for correct JSON keys
-                example_dict = example._asdict()
-                
-                # 2. Dump the dictionary as a JSON string
-                json_string = json.dumps(example_dict)
-                
-                # 3. Write it as a single line (JSONL format) with no comma
-                f.write(json_string + '\n')
+                yield example._asdict()
 
-    retrieved_dataset = load_dataset("json", data_files=output_file)
-    
-    print("\nSuccessfully retrieved dataset:")
-    print(retrieved_dataset)
-    
-    print("\nFirst example from the *retrieved* dataset:")
-    print(retrieved_dataset[0])
+if __name__ == "__main__":
+    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/synthetic_text_to_sql_test.snappy.parquet"
+    output_folder = "./data"
+    print("starting data processing")
+    arrow_dataset = Dataset.from_generator(sql_instance_generator)
+    print("splitting data")
+    split_arrow_dataset = arrow_dataset.train_test_split(test_size=0.05, seed=68)
+    split_arrow_dataset.save_to_disk(output_folder)
 
-    print("length of retrieved dataset:", len(retrieved_dataset['train']))
+    print("loading data to verify")
+    reloaded = load_from_disk(output_folder)
+    print(reloaded)
+    print("First train example:", reloaded['train'][0])
         
