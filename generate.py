@@ -160,7 +160,7 @@ Output format (json):
     messages = [{"role": "user", "content": prompt} for prompt in prompts]
     prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
     
-
+ 
     encoded_outputs = tokenizer(
         prompts,
         add_special_tokens=False,
