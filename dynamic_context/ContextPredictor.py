@@ -9,7 +9,7 @@ from datasets import load_dataset, Dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 import bisect
 
-FIXED_BUCKETS = [32, 64, 128, 256]
+FIXED_BUCKETS = [16,32,48,64,96,128,512]
 load_dotenv()
 class ContextPredictor(nn.Module):
     def __init__(self, num_classes, dropout = 0.3, bert_requires_grad = False):
