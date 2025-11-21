@@ -9,3 +9,4 @@ env/
 *.db
 **/wandb/
 **/data/
+**/saved_models/
