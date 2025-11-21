@@ -6,12 +6,13 @@ from dotenv import load_dotenv
 import wandb
 from tqdm import tqdm, trange
 from datasets import load_dataset, Dataset, load_from_disk
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
+import bisect
 
-MAX_SCALE = 512
+FIXED_BUCKETS = [32, 64, 128, 256]
 load_dotenv()
 class ContextPredictor(nn.Module):
-    def __init__(self, dropout = 0.3, bert_requires_grad = False):
+    def __init__(self, num_classes, dropout = 0.3, bert_requires_grad = False):
         super().__init__()
         self.bert = AutoModel.from_pretrained("distilbert-base-uncased")
         for param in self.bert.parameters():
@@ -24,7 +25,7 @@ class ContextPredictor(nn.Module):
             ),
             nn.LayerNorm(256),
             nn.GELU(),
-            nn.Dropout(0.3),
+            nn.Dropout(dropout),
 
             nn.Linear(
                 in_features=256,
@@ -32,8 +33,7 @@ class ContextPredictor(nn.Module):
             ),
             nn.LayerNorm(64),
             nn.GELU(),
-            nn.Linear(64,1),
-            nn.Softplus()
+            nn.Linear(64,num_classes),
         )
     
     def forward(self, input_ids, attention_mask):
@@ -59,14 +59,18 @@ def create_dataloaders(dataset_path, label_tokenizer, input_tokenizer, batch_siz
 
 def train_predictor(model, training_data, validation_data):
     device = get_device('cuda')
-    model = ContextPredictor()
-    loss_fn = nn.SmoothL1Loss()
+    loss_fn = nn.CrossEntropyLoss()
 
     
-    learning_rate = 1e-6
+    learning_rate = 1e-4
     epochs = 1
-
+ 
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=0,
+        num_training_steps=epochs * len(training_data)
+    )
     model.train()
     model.to(device)
     print(f"model loaded on {device}")
@@ -79,12 +83,34 @@ def train_predictor(model, training_data, validation_data):
                 
                 input_ids = data['input_ids'].to(device)
                 attention_mask = data['attention_mask'].to(device)
-                labels = data['labels'].to(device) / MAX_SCALE
+                labels = data['labels'].to(device)
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                 loss = loss_fn(outputs.squeeze(), labels)
                 loss.backward()
+
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
                 optimizer.step()
+                scheduler.step()
                 wandb.log({"train_loss": loss.item()})
+
+                if (step + 1) % 100 == 0:
+                    val_losses = []
+                    model.eval()
+                    with torch.no_grad():
+                        for val_data in validation_data:
+                            input_ids = val_data['input_ids'].to(device)
+                            attention_mask = val_data['attention_mask'].to(device)
+                            labels = val_data['labels'].to(device)
+                            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                            val_loss = loss_fn(outputs.squeeze(), labels)
+                            val_losses.append(val_loss.item())
+                    avg_val_loss = sum(val_losses) / len(val_losses)
+                    wandb.log({"val_loss": avg_val_loss})
+                    print(f"Epoch {epoch+1}, Step {step+1}, Val Loss: {avg_val_loss}")
+                    model.train()
+            # end of epoch
+            torch.save(model.state_dict(), f"saved_models/predictor_epoch_{epoch+1}.pt")
     model.to('cpu')
     model.eval()
     return model
@@ -109,7 +135,8 @@ def main():
             padding=False
         )
         sql_len = float(len(tokenized_target["input_ids"]))
-        tokenized["labels"] = sql_len
+        bucket_idx = bisect.bisect_left(FIXED_BUCKETS, sql_len)
+        tokenized["labels"] = bucket_idx
         return tokenized
 
     tokenized_datasets = reloaded.map(tokenize_function, batched=False, remove_columns=reloaded["train"].column_names)
@@ -129,7 +156,9 @@ def main():
         eval_dataset, batch_size=64
     )
 
-    model = ContextPredictor(bert_requires_grad=True)
+    print(eval_dataloader)
+
+    model = ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
     train_predictor(model, train_dataloader, eval_dataloader)
 
 if __name__ == "__main__":
