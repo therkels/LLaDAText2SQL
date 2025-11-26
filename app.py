@@ -215,6 +215,24 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)  # b, l
             elif remasking == 'random':
                 x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
+            elif remasking == 'Text2SQL':
+                # call remasking funtion for Text2SQL
+            
+
+                # GitHub Copilot placeholder implementation
+                # For Text2SQL, we can use a custom remasking strategy
+                # Here, we use low confidence but prioritize SQL keywords
+                sql_keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'ON']
+                sql_token_ids = [tokenizer.encode(" " + kw, add_special_tokens=False)[0] for kw in sql_keywords]
+                
+                p = F.softmax(logits.to(torch.float64), dim=-1)
+                x0_p = torch.squeeze(
+                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)  # b, l
+                
+                # Boost confidence for SQL keywords
+                for token_id in sql_token_ids:
+                    keyword_mask = (x0 == token_id)
+                    x0_p = torch.where(keyword_mask, x0_p + 0.1, x0_p)  # Boost confidence slightly
             else:
                 raise NotImplementedError(f"Remasking strategy '{remasking}' not implemented")
             
@@ -355,7 +373,7 @@ def create_chatbot_demo():
                     label="Block Length"
                 )
                 remasking_strategy = gr.Radio(
-                    choices=["low_confidence", "random"],
+                    choices=["low_confidence", "random", "Text2SQL"],
                     value="low_confidence",
                     label="Remasking Strategy"
                 )
