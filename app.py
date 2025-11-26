@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModel
 import time
 import re
+import os
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
@@ -508,5 +509,15 @@ def create_chatbot_demo():
 
 # Launch the demo
 if __name__ == "__main__":
+    port = 7860
+    root_path_template = os.environ.get("VSCODE_PROXY_URI")
+    proxy_url = root_path_template.replace("{{port}}/", str(port))
+    proxy_url = proxy_url.replace("https://greatlakes.arc-ts.umich.edu", "")
+    print(proxy_url)
+
     demo = create_chatbot_demo()
-    demo.queue().launch(share=True)
+    demo.queue().launch(
+    server_name="0.0.0.0",
+    server_port=port,
+    root_path=proxy_url
+)
