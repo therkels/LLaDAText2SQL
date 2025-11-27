@@ -15,6 +15,51 @@ tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_rem
 model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, 
                                   torch_dtype=torch.bfloat16).to(device)
 
+SQL_KEYWORD_LIST = [
+    'FULL OUTER JOIN',
+    'OR',
+    'EXCEPT',
+    'OF',
+    'DISTINCT',
+    'SELECT',
+    'FALSE',
+    'ASC',
+    'DESC',
+    'USING',
+    'YEAR',
+    'INTO',
+    'BETWEEN',
+    'OFFSET',
+    'INTERSECT',
+    'INSERT',
+    'JOIN',
+    'LEFT JOIN',
+    'UNION',
+    'LIMIT',
+    'AND',
+    'INNER JOIN',
+    'RIGHT JOIN',
+    'TRUE',
+    'LEFT OUTER JOIN',
+    'AS',
+    'GROUP BY',
+    'IN',
+    'WINDOW',
+    'CROSS JOIN',
+    'ON',
+    'ORDER BY',
+    'RETURNING',
+    'HAVING',
+    'FROM',
+    'UNION ALL'
+]
+
+context_tokens = [
+    'equipment_maintenance',
+    'equipment_type',
+    'maintenance_frequency'
+]
+
 # Constants
 MASK_TOKEN = "[MASK]"
 MASK_ID = 126336  # The token ID of [MASK] in LLaDA
@@ -210,19 +255,23 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
             
             # Calculate confidence scores for remasking
             if remasking == 'low_confidence':
+                print("Using Low Confidence")
                 p = F.softmax(logits.to(torch.float64), dim=-1)
                 x0_p = torch.squeeze(
                     torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)  # b, l
             elif remasking == 'random':
+                print("Using Random")
                 x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
             elif remasking == 'Text2SQL':
+                print("Using Text2SQL")
                 # call remasking funtion for Text2SQL
             
 
                 # GitHub Copilot placeholder implementation
                 # For Text2SQL, we can use a custom remasking strategy
                 # Here, we use low confidence but prioritize SQL keywords
-                sql_keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'ON']
+                # sql_keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'ON']
+                sql_keywords = SQL_KEYWORD_LIST + context_tokens
                 sql_token_ids = [tokenizer.encode(" " + kw, add_special_tokens=False)[0] for kw in sql_keywords]
                 
                 p = F.softmax(logits.to(torch.float64), dim=-1)
@@ -232,7 +281,18 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
                 # Boost confidence for SQL keywords
                 for token_id in sql_token_ids:
                     keyword_mask = (x0 == token_id)
-                    x0_p = torch.where(keyword_mask, x0_p + 0.1, x0_p)  # Boost confidence slightly
+                    
+                    
+                    boost_confidence_val = float('inf') # Large value to ensure keywords are prioritized
+                    
+                    
+                    x0_p = torch.where(keyword_mask, x0_p + boost_confidence_val, x0_p)  # Boost confidence slightly
+                
+                # Normalize confidence scores
+                x0_p = (x0_p - x0_p.min()) / (x0_p.max() - x0_p.min() + 1e-8)
+                
+                
+                
             else:
                 raise NotImplementedError(f"Remasking strategy '{remasking}' not implemented")
             
@@ -311,18 +371,243 @@ css = '''
 .category-legend{display:none}
 button{height: 60px}
 '''
+# def create_chatbot_demo():
+#     # with gr.Blocks(css=css) as demo:
+#     with gr.Blocks() as demo:
+#         # We inject the CSS manually using Markdown to bypass the error
+#         gr.Markdown(f"<style>{css}</style>") 
+        
+#         # gr.Markdown("# LLaDA - Large Language Diffusion Model Demo")
+#         gr.Markdown("# LLaDA - Large Language Diffusion Model Demo")
+#         gr.Markdown("[model](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct), [project page](https://ml-gsai.github.io/LLaDA-demo/)")
+        
+#         # STATE MANAGEMENT
+#         chat_history = gr.State([])
+        
+#         # UI COMPONENTS
+#         with gr.Row():
+#             with gr.Column(scale=3):
+#                 chatbot_ui = gr.Chatbot(label="Conversation", height=500)
+                
+#                 # Message input
+#                 with gr.Group():
+#                     with gr.Row():
+#                         user_input = gr.Textbox(
+#                             label="Your Message", 
+#                             placeholder="Type your message here...",
+#                             show_label=False
+#                         )
+#                         send_btn = gr.Button("Send")
+                
+#                 constraints_input = gr.Textbox(
+#                     label="Word Constraints", 
+#                     info="This model allows for placing specific words at specific positions using 'position:word' format. Example: 1st word once, 6th word 'upon' and 11th word 'time', would be: '0:Once, 5:upon, 10:time",
+#                     placeholder="0:Once, 5:upon, 10:time",
+#                     value=""
+#                 )
+#             with gr.Column(scale=2):
+#                 output_vis = gr.HighlightedText(
+#                     label="Denoising Process Visualization",
+#                     combine_adjacent=False,
+#                     show_legend=True,
+#                 )
+        
+#         # Advanced generation settings
+#         with gr.Accordion("Generation Settings", open=False):
+#             with gr.Row():
+#                 gen_length = gr.Slider(
+#                     minimum=16, maximum=128, value=64, step=8,
+#                     label="Generation Length"
+#                 )
+#                 steps = gr.Slider(
+#                     minimum=8, maximum=64, value=32, step=4,
+#                     label="Denoising Steps"
+#                 )
+#             with gr.Row():
+#                 temperature = gr.Slider(
+#                     minimum=0.0, maximum=1.0, value=0.0, step=0.1,
+#                     label="Temperature"
+#                 )
+#                 cfg_scale = gr.Slider(
+#                     minimum=0.0, maximum=2.0, value=0.0, step=0.1,
+#                     label="CFG Scale"
+#                 )
+#             with gr.Row():
+#                 block_length = gr.Slider(
+#                     minimum=8, maximum=128, value=32, step=8,
+#                     label="Block Length"
+#                 )
+#                 remasking_strategy = gr.Radio(
+#                     choices=["low_confidence", "random", "Text2SQL"],
+#                     value="low_confidence",
+#                     label="Remasking Strategy"
+#                 )
+#             with gr.Row():
+#                 visualization_delay = gr.Slider(
+#                     minimum=0.0, maximum=1.0, value=0.1, step=0.1,
+#                     label="Visualization Delay (seconds)"
+#                 )
+        
+#         # Current response text box (hidden)
+#         current_response = gr.Textbox(
+#             label="Current Response",
+#             placeholder="The assistant's response will appear here...",
+#             lines=3,
+#             visible=False
+#         )
+        
+#         # Clear button
+#         clear_btn = gr.Button("Clear Conversation")
+        
+#         # HELPER FUNCTIONS
+#         def add_message(history, message, response):
+#             """Add a message pair to the history and return the updated history"""
+#             history = history.copy()
+#             history.append([message, response])
+#             return history
+            
+#         def user_message_submitted(message, history, gen_length, steps, constraints, delay):
+#             """Process a submitted user message"""
+#             # Skip empty messages
+#             if not message.strip():
+#                 # Return current state unchanged
+#                 history_for_display = history.copy()
+#                 return history, history_for_display, "", [], ""
+                
+#             # Add user message to history
+#             history = add_message(history, message, None)
+            
+#             # Format for display - temporarily show user message with empty response
+#             history_for_display = history.copy()
+            
+#             # Clear the input
+#             message_out = ""
+            
+#             # Return immediately to update UI with user message
+#             return history, history_for_display, message_out, [], ""
+            
+#         def bot_response(history, gen_length, steps, constraints, delay, temperature, cfg_scale, block_length, remasking):
+#             """Generate bot response for the latest message"""
+#             if not history:
+#                 return history, [], ""
+                
+#             # Get the last user message
+#             last_user_message = history[-1][0]
+            
+#             try:
+#                 # Format all messages except the last one (which has no response yet)
+#                 messages = format_chat_history(history[:-1])
+                
+#                 # Add the last user message
+#                 messages.append({"role": "user", "content": last_user_message})
+                
+#                 # Parse constraints
+#                 parsed_constraints = parse_constraints(constraints)
+                
+#                 # Generate response with visualization
+#                 vis_states, response_text = generate_response_with_visualization(
+#                     model, tokenizer, device, 
+#                     messages, 
+#                     gen_length=gen_length, 
+#                     steps=steps,
+#                     constraints=parsed_constraints,
+#                     temperature=temperature,
+#                     cfg_scale=cfg_scale,
+#                     block_length=block_length,
+#                     remasking=remasking
+#                 )
+                
+#                 # Update history with the assistant's response
+#                 history[-1][1] = response_text
+                
+#                 # Return the initial state immediately
+#                 yield history, vis_states[0], response_text
+                
+#                 # Then animate through visualization states
+#                 for state in vis_states[1:]:
+#                     time.sleep(delay)
+#                     yield history, state, response_text
+                    
+#             except Exception as e:
+#                 error_msg = f"Error: {str(e)}"
+#                 print(error_msg)
+                
+#                 # Show error in visualization
+#                 error_vis = [(error_msg, "red")]
+                
+#                 # Don't update history with error
+#                 yield history, error_vis, error_msg
+        
+#         def clear_conversation():
+#             """Clear the conversation history"""
+#             return [], [], "", []
+        
+#         # EVENT HANDLERS
+        
+#         # Clear button handler
+#         clear_btn.click(
+#             fn=clear_conversation,
+#             inputs=[],
+#             outputs=[chat_history, chatbot_ui, current_response, output_vis]
+#         )
+        
+#         # User message submission flow (2-step process)
+#         # Step 1: Add user message to history and update UI
+#         msg_submit = user_input.submit(
+#             fn=user_message_submitted,
+#             inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
+#             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
+#         )
+        
+#         # Also connect the send button
+#         send_click = send_btn.click(
+#             fn=user_message_submitted,
+#             inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
+#             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
+#         )
+        
+#         # Step 2: Generate bot response
+#         # This happens after the user message is displayed
+#         msg_submit.then(
+#             fn=bot_response,
+#             inputs=[
+#                 chat_history, gen_length, steps, constraints_input, 
+#                 visualization_delay, temperature, cfg_scale, block_length,
+#                 remasking_strategy
+#             ],
+#             outputs=[chatbot_ui, output_vis, current_response]
+#         )
+        
+#         send_click.then(
+#             fn=bot_response,
+#             inputs=[
+#                 chat_history, gen_length, steps, constraints_input, 
+#                 visualization_delay, temperature, cfg_scale, block_length,
+#                 remasking_strategy
+#             ],
+#             outputs=[chatbot_ui, output_vis, current_response]
+#         )
+        
+#     return demo
+
 def create_chatbot_demo():
-    with gr.Blocks(css=css) as demo:
+    # with gr.Blocks(css=css) as demo:
+    with gr.Blocks() as demo:
+        # We inject the CSS manually using Markdown to bypass the error
+        gr.Markdown(f"<style>{css}</style>") 
+        
         gr.Markdown("# LLaDA - Large Language Diffusion Model Demo")
         gr.Markdown("[model](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct), [project page](https://ml-gsai.github.io/LLaDA-demo/)")
         
         # STATE MANAGEMENT
+        # We keep this as a list of tuples [[user, bot], ...] for backend compatibility
         chat_history = gr.State([])
         
         # UI COMPONENTS
         with gr.Row():
             with gr.Column(scale=3):
-                chatbot_ui = gr.Chatbot(label="Conversation", height=500)
+                # Standard Chatbot (defaults to type="messages" in new Gradio)
+                chatbot_ui = gr.Chatbot(label="Conversation", height=500) 
                 
                 # Message input
                 with gr.Group():
@@ -394,7 +679,20 @@ def create_chatbot_demo():
         # Clear button
         clear_btn = gr.Button("Clear Conversation")
         
-        # HELPER FUNCTIONS
+        # --- HELPER FUNCTIONS ---
+        
+        def to_msg_format(history_tuples):
+            """
+            Converts internal tuple history [[u, b], ...] 
+            to Gradio's new message format [{'role':'user', 'content':u}, ...]
+            """
+            messages = []
+            for user_msg, assistant_msg in history_tuples:
+                messages.append({"role": "user", "content": user_msg})
+                if assistant_msg is not None:
+                    messages.append({"role": "assistant", "content": assistant_msg})
+            return messages
+
         def add_message(history, message, response):
             """Add a message pair to the history and return the updated history"""
             history = history.copy()
@@ -405,15 +703,14 @@ def create_chatbot_demo():
             """Process a submitted user message"""
             # Skip empty messages
             if not message.strip():
-                # Return current state unchanged
-                history_for_display = history.copy()
-                return history, history_for_display, "", [], ""
+                # Return current state unchanged (converting format for UI)
+                return history, to_msg_format(history), "", [], ""
                 
-            # Add user message to history
+            # Add user message to history (Internal State remains tuples)
             history = add_message(history, message, None)
             
-            # Format for display - temporarily show user message with empty response
-            history_for_display = history.copy()
+            # Format for display (UI gets dicts)
+            history_for_display = to_msg_format(history)
             
             # Clear the input
             message_out = ""
@@ -424,7 +721,7 @@ def create_chatbot_demo():
         def bot_response(history, gen_length, steps, constraints, delay, temperature, cfg_scale, block_length, remasking):
             """Generate bot response for the latest message"""
             if not history:
-                return history, [], ""
+                return [], ""
                 
             # Get the last user message
             last_user_message = history[-1][0]
@@ -452,16 +749,19 @@ def create_chatbot_demo():
                     remasking=remasking
                 )
                 
-                # Update history with the assistant's response
+                # Update internal history with the assistant's response
                 history[-1][1] = response_text
                 
+                # Create UI version
+                ui_history = to_msg_format(history)
+                
                 # Return the initial state immediately
-                yield history, vis_states[0], response_text
+                yield ui_history, vis_states[0], response_text
                 
                 # Then animate through visualization states
                 for state in vis_states[1:]:
                     time.sleep(delay)
-                    yield history, state, response_text
+                    yield ui_history, state, response_text
                     
             except Exception as e:
                 error_msg = f"Error: {str(e)}"
@@ -470,14 +770,15 @@ def create_chatbot_demo():
                 # Show error in visualization
                 error_vis = [(error_msg, "red")]
                 
-                # Don't update history with error
-                yield history, error_vis, error_msg
+                # Don't update history with error, but update UI to show crash
+                # (We just re-yield the current state)
+                yield to_msg_format(history), error_vis, error_msg
         
         def clear_conversation():
             """Clear the conversation history"""
             return [], [], "", []
         
-        # EVENT HANDLERS
+        # --- EVENT HANDLERS ---
         
         # Clear button handler
         clear_btn.click(
@@ -527,15 +828,33 @@ def create_chatbot_demo():
 
 # Launch the demo
 if __name__ == "__main__":
+    # 1. CRITICAL FIX: Bypass the proxy for localhost so Gradio can start
+    os.environ["no_proxy"] = "localhost,127.0.0.1,0.0.0.0"
+
     port = 7860
-    root_path_template = os.environ.get("VSCODE_PROXY_URI")
-    proxy_url = root_path_template.replace("{{port}}/", str(port))
-    proxy_url = proxy_url.replace("https://greatlakes.arc-ts.umich.edu", "")
-    print(proxy_url)
+    
+    # 2. Get the VSCode Proxy URL (specific to UMich OnDemand/Great Lakes)
+    # Check if the environment variable exists to avoid crashes if running locally
+    root_path_template = os.environ.get("VSCODE_PROXY_URI", "")
+    
+    if root_path_template:
+        proxy_url = root_path_template.replace("{{port}}/", str(port))
+        # Remove the https prefix if present in the template to avoid double scheme
+        proxy_url = proxy_url.replace("https://greatlakes.arc-ts.umich.edu", "")
+        print(f"Running on proxy URL: {proxy_url}")
+    else:
+        proxy_url = ""
+        print("VSCODE_PROXY_URI not found. Running without root_path.")
 
     demo = create_chatbot_demo()
+    
+    # 3. Launch with corrected settings
     demo.queue().launch(
-    server_name="0.0.0.0",
-    server_port=port,
-    root_path=proxy_url
-)
+        server_name="0.0.0.0",
+        server_port=port,
+        root_path=proxy_url,
+        share=False,      # Must be False on clusters
+        inbrowser=False,  # Must be False to prevent browser launch crashes
+        allowed_paths=["."]
+    )
+
