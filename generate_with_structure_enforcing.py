@@ -11,6 +11,11 @@ import time
 import os
 from datasets import load_dataset
 
+
+#Dynamic context prediction
+import dynamic_context.ContextPredictor as cp
+FIXED_BUCKETS = [16,32,48,64,96,128,512]
+
 def add_gumbel_noise(logits, temperature):
     '''
     The Gumbel max is a method for sampling categorical distributions.
@@ -350,7 +355,7 @@ def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch
         break  # Remove this break when ready to process all data
 
     print(len(dataset))
-    
+
 def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
     device = 'cuda'
     print(f"Using device: {device}")
@@ -381,6 +386,27 @@ def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
         with open(f"{path_to_output_sql}/{instance_id}.sql", 'w') as out_f:
             out_f.write(sql_query)
 
+def predict_context_length(context_model, tokenizer, context, prompt, device='cuda'):
+    '''
+    Predict the context length bucket using the context predictor model.
+    '''
+    # Tokenize context and prompt
+    encoded_context = tokenizer(
+        prompt,
+        context,
+        truncation=True,
+        max_length=512,
+        return_tensors="pt"
+    )
+    input_ids = encoded_context.input_ids.to(device)
+    attention_mask = encoded_context.attention_mask.to(device)
+
+    with torch.no_grad():
+        logits = context_model(input_ids, attention_mask)
+        pred = torch.softmax(logits, dim=-1)
+        bucket_idx = torch.argmax(pred, dim=-1).item()
+    return FIXED_BUCKETS[bucket_idx]
+
 def parse_sql(output):
     pat = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
 
@@ -395,8 +421,14 @@ def parse_sql(output):
     r = [first_in(s) for s in output]
     return r
 
-def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
+def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50, context_model=None):
     device = "cuda"
+        # Setup dynamic context prediction
+    SAVED_MODEL_PATH = "saved_models/predict_model.pt"
+    context_model = cp.ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
+    context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
+    context_model = context_model.to(device).eval()
+    context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
     if model is None or tokenizer is None:
         model = AutoModel.from_pretrained(
@@ -427,7 +459,9 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
             context = instance['sql_context']
             prompt = instance['sql_prompt']
             _id = instance['id']
-            sql = text_to_sql(model, tokenizer, context, prompt)
+            # Predict context length bucket
+            context_length = predict_context_length(context_model, context_tokenizer, context, prompt, device=device)
+            sql = text_to_sql(model, tokenizer, context, prompt, block_length=context_length, gen_length=context_length)
             df.loc[len(df)] = [_id, sql]
             if save_path and autosave_every and (i % autosave_every == 0):
                 atomic_save()
@@ -505,7 +539,7 @@ def text_to_sql_structured(model, tokenizer, context, instruction, gen_length_qu
     output = tokenizer.batch_decode(out, skip_special_tokens=True)
     return output
 
-def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
+def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_length=32):
     device = 'cuda'
     print("building prompts")
   # build flat prompts
@@ -538,12 +572,11 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256):
     input_ids = encoded_outputs['input_ids'].to(device)
     attention_mask = encoded_outputs['attention_mask'].to(device)
     print("Starting Generation")
-    out = generate_original(model, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
+    out = generate_original(model, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking='low_confidence')
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     print(output)
     parsed_sql = parse_sql(output)
     return parsed_sql
-
 
 def main():
     device = 'cuda'
@@ -575,7 +608,7 @@ if __name__ == '__main__':
     file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
     retrieved_dataset = load_dataset("json", data_files=file_path)
     test_dataset = retrieved_dataset['train']
-    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv")
+    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv", context_model=context_model)
 
     for example in test_dataset:
         print(example)
