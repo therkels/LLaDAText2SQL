@@ -215,46 +215,6 @@ def extract_first_json(text):
             if not stack:
                 return text[start:i+1]  # return the full {...}
     return None  # if unmatched
-
-class SpiderDataset(torch.utils.data.Dataset):
-    '''
-    Dataset class for Spider dataset that preloads all data into memory and prepares prompts for LLM.
-    '''
-    def __init__(self, path_to_json, path_to_documents, tokenizer, device='cuda', 
-                 gen_length_query=512, gen_length_explanation=512):
-        self.path_to_documents = path_to_documents
-        self.tokenizer = tokenizer
-        self.device = device
-        self.gen_length_query = gen_length_query
-        self.gen_length_explanation = gen_length_explanation
-        self.mask_id = 126336  # The LLaDA mask token ID
-        
-        # Set up tokenizer
-        if tokenizer.padding_side != 'left':
-            tokenizer.padding_side = 'left'
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        assert tokenizer.pad_token_id != self.mask_id, "Pad token ID cannot be the same as Mask ID"
-        
-        # Load all data at initialization
-        with open(path_to_json, 'r') as f:
-            self.data = [json.loads(line) for line in f]
-            
-        # Preload all document contexts
-        self.contexts = {}
-        for entry in self.data:
-            print(entry.get('external_knowledge', 'No external_knowledge field found'))
-            doc_name = entry['external_knowledge']
-            if doc_name not in self.contexts:
-                with open(f"{path_to_documents}/{doc_name}", 'r') as doc_f:
-                    self.contexts[doc_name] = doc_f.read()
-                    
-        # Pre-tokenize the JSON template parts
-        self.template_parts = {
-            'start': tokenizer('{\n  "query": "', add_special_tokens=False, return_tensors="pt").input_ids.to(device),
-            'middle': tokenizer('",\n  "explanation": "', add_special_tokens=False, return_tensors="pt").input_ids.to(device),
-            'end': tokenizer('"\n}', add_special_tokens=False, return_tensors="pt").input_ids.to(device)
-        }
     
     def prepare_prompt(self, context, instruction):
         """Prepare the prompt with proper formatting and tokenization."""
@@ -321,70 +281,7 @@ class SpiderDataset(torch.utils.data.Dataset):
             'raw_context': context
         }
 
-def preprocess_spider(path_to_json, path_to_documents, path_to_output_sql, batch_size=1):
-    '''
-    Preprocess the Spider dataset to generate SQL queries using the LLaDA model.
-    Args:
-        path_to_json: Path to the Spider JSONL file.
-        path_to_documents: Path to the folder containing database schema documents.
-        path_to_output_sql: Path to the folder to save generated SQL queries.
-        batch_size: Batch size for the dataloader.
-    '''
-    # Create dataset
-    dataset = SpiderDataset(path_to_json, path_to_documents, tokenizer=AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True))
-    
-    # Create dataloader
-    dataloader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4
-    )
-    
-    # Process batches
-    for batch in dataloader:
-        for instance_id, instruction, context in zip(
-            batch['instance_id'], 
-            batch['instruction'], 
-            batch['context']
-        ):
-            print(f"Processing instance {instance_id}")
-            print("Context:", context)
-            print("Instruction:", instruction)
-            print("-" * 80)
-        break  # Remove this break when ready to process all data
 
-    print(len(dataset))
-
-def generate_spider_sql(path_to_json, path_to_documents, path_to_output_sql):
-    device = 'cuda'
-    print(f"Using device: {device}")
-
-    # id = 'LLaDA-8B-Instruct'
-    id = 'LLaDA-1.5'
-    model = AutoModel.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained(f'GSAI-ML/{id}', trust_remote_code=True)
-
-    with open(path_to_json, 'r') as f:
-        data = [json.loads(line) for line in f]
-
-    for entry in data:
-        instance_id = entry['instance_id']
-        instruction = entry['instruction']
-        context = entry['external_knowledge']
-        # context holds the name of the document file in path_to_documents
-        with open(f"{path_to_documents}/{context}", 'r') as doc_f:
-            context = doc_f.read()
-        # generate from context and instruction
-        output = text_to_sql(model, tokenizer, context, instruction)
-        print(f"Generated output for instance {instance_id}:\n{output[0]}\n")
-        # extract sql from output
-        parsed_output = json.loads(extract_first_json(output[0]))
-        sql_query = parsed_output.get("query", "")
-        # save to submission folder
-        print(f"Generated SQL query for instance {instance_id}:\n{sql_query}\n")
-        with open(f"{path_to_output_sql}/{instance_id}.sql", 'w') as out_f:
-            out_f.write(sql_query)
 
 def predict_context_length(context_model, tokenizer, context, prompt, device='cuda'):
     '''
@@ -572,6 +469,7 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_le
     input_ids = encoded_outputs['input_ids'].to(device)
     attention_mask = encoded_outputs['attention_mask'].to(device)
     print("Starting Generation")
+    print(f"gen length:{gen_length}, block_length:{block_length}")
     out = generate_original(model, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking='low_confidence')
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     print(output)
@@ -584,10 +482,12 @@ def main():
 
     model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
-
-    # Load context predictor model
-    context_model = cp.ContextPredictor().to(device).eval()
-    context_tokenizer = tokenizer  # or use a separate tokenizer if needed
+    # Setup dynamic context prediction
+    SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
+    context_model = cp.ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
+    context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
+    context_model = context_model.to(device).eval()
+    context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
     context = "CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');"
     instruction = "What is the total volume of timber sold by each salesperson, sorted by salesperson?"
@@ -601,7 +501,8 @@ def main():
         tokenizer,
         context=context,
         instruction=instruction,
-        gen_length=gen_length
+        gen_length=gen_length,
+        block_length=gen_length
     )
     print(output)
 
@@ -616,14 +517,14 @@ if __name__ == '__main__':
     # #                     '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/Spider2/spider2-snow/evaluation_suite/submission_folder/')
     # tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-1.5', trust_remote_code=True)
     # preprocess_spider(t2s_instruction, document_context, output_sql_folder)
-    # main()
-    file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
-    retrieved_dataset = load_dataset("json", data_files=file_path)
-    test_dataset = retrieved_dataset['train']
-    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv")
+    main()
+    # file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
+    # retrieved_dataset = load_dataset("json", data_files=file_path)
+    # test_dataset = retrieved_dataset['train']
+    # df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv")
 
-    for example in test_dataset:
-        print(example)
-        break
+    # for example in test_dataset:
+    #     print(example)
+    #     break
 
 
