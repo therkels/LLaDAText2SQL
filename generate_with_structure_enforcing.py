@@ -421,7 +421,7 @@ def parse_sql(output):
     r = [first_in(s) for s in output]
     return r
 
-def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50, context_model=None):
+def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
     device = "cuda"
         # Setup dynamic context prediction
     SAVED_MODEL_PATH = "saved_models/predict_model.pt"
@@ -585,11 +585,23 @@ def main():
     model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
+    # Load context predictor model
+    context_model = cp.ContextPredictor().to(device).eval()
+    context_tokenizer = tokenizer  # or use a separate tokenizer if needed
+
+    context = "CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');"
+    instruction = "What is the total volume of timber sold by each salesperson, sorted by salesperson?"
+
+    # Predict SQL length bucket
+    gen_length = predict_context_length(context_model, context_tokenizer, context, instruction, device)
+    print(f"Predicted SQL generation length: {gen_length}")
+
     output = text_to_sql(
-        model, 
-        tokenizer, 
-        context="CREATE TABLE salesperson (salesperson_id INT, name TEXT, region TEXT); INSERT INTO salesperson (salesperson_id, name, region) VALUES (1, 'John Doe', 'North'), (2, 'Jane Smith', 'South'); CREATE TABLE timber_sales (sales_id INT, salesperson_id INT, volume REAL, sale_date DATE); INSERT INTO timber_sales (sales_id, salesperson_id, volume, sale_date) VALUES (1, 1, 120, '2021-01-01'), (2, 1, 150, '2021-02-01'), (3, 2, 180, '2021-01-01');",
-        instruction="What is the total volume of timber sold by each salesperson, sorted by salesperson?"
+        model,
+        tokenizer,
+        context=context,
+        instruction=instruction,
+        gen_length=gen_length
     )
     print(output)
 
@@ -608,7 +620,7 @@ if __name__ == '__main__':
     file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/valid_test.json"
     retrieved_dataset = load_dataset("json", data_files=file_path)
     test_dataset = retrieved_dataset['train']
-    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv", context_model=context_model)
+    df_output = generate_eval_sql(test_dataset, save_path="output_sql.csv")
 
     for example in test_dataset:
         print(example)
