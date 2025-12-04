@@ -6,10 +6,11 @@ from transformers import AutoTokenizer, AutoModel
 import time
 import re
 import os
+from strict_outputs.remask import Text2SQLMasker
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
-
+text2sql_masker = Text2SQLMasker()
 # Load model and tokenizer
 tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, 
@@ -92,7 +93,7 @@ def get_num_transfer_tokens(mask_index, steps):
 
     return num_transfer_tokens
 
-def generate_response_with_visualization(model, tokenizer, device, messages, gen_length=64, steps=32, 
+def generate_response_with_visualization(model, tokenizer, device, messages, text2sql_masker=None, gen_length=64, steps=32, 
                                          constraints=None, temperature=0.0, cfg_scale=0.0, block_length=32,
                                          remasking='low_confidence'):
     """
@@ -216,23 +217,9 @@ def generate_response_with_visualization(model, tokenizer, device, messages, gen
             elif remasking == 'random':
                 x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
             elif remasking == 'Text2SQL':
-                # call remasking funtion for Text2SQL
-            
-
-                # GitHub Copilot placeholder implementation
-                # For Text2SQL, we can use a custom remasking strategy
-                # Here, we use low confidence but prioritize SQL keywords
-                sql_keywords = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'INSERT', 'UPDATE', 'DELETE', 'JOIN', 'ON']
-                sql_token_ids = [tokenizer.encode(" " + kw, add_special_tokens=False)[0] for kw in sql_keywords]
-                
-                p = F.softmax(logits.to(torch.float64), dim=-1)
-                x0_p = torch.squeeze(
-                    torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)  # b, l
-                
-                # Boost confidence for SQL keywords
-                for token_id in sql_token_ids:
-                    keyword_mask = (x0 == token_id)
-                    x0_p = torch.where(keyword_mask, x0_p + 0.1, x0_p)  # Boost confidence slightly
+                if text2sql_masker is None:
+                    raise ValueError("Text2SQL remasking requires a Text2SQLMasker instance.")
+                x0_p = text2sql_masker.get_masking_confidence_scores(x0, tokenizer)
             else:
                 raise NotImplementedError(f"Remasking strategy '{remasking}' not implemented")
             
@@ -315,27 +302,34 @@ def create_chatbot_demo():
     with gr.Blocks(css=css) as demo:
         gr.Markdown("# LLaDA - Large Language Diffusion Model Demo")
         gr.Markdown("[model](https://huggingface.co/GSAI-ML/LLaDA-8B-Instruct), [project page](https://ml-gsai.github.io/LLaDA-demo/)")
-        
+
         # STATE MANAGEMENT
         chat_history = gr.State([])
-        
+
         # UI COMPONENTS
         with gr.Row():
             with gr.Column(scale=3):
                 chatbot_ui = gr.Chatbot(label="Conversation", height=500)
-                
+
                 # Message input
                 with gr.Group():
                     with gr.Row():
                         user_input = gr.Textbox(
-                            label="Your Message", 
+                            label="Your Message",
                             placeholder="Type your message here...",
                             show_label=False
                         )
                         send_btn = gr.Button("Send")
-                
+
+                # SQL context input
+                sql_context_input = gr.Textbox(
+                    label="SQL Context",
+                    placeholder="Paste table schema, sample SQL, etc. This will be prepended to your message.",
+                    lines=4,
+                )
+
                 constraints_input = gr.Textbox(
-                    label="Word Constraints", 
+                    label="Word Constraints",
                     info="This model allows for placing specific words at specific positions using 'position:word' format. Example: 1st word once, 6th word 'upon' and 11th word 'time', would be: '0:Once, 5:upon, 10:time",
                     placeholder="0:Once, 5:upon, 10:time",
                     value=""
@@ -346,7 +340,7 @@ def create_chatbot_demo():
                     combine_adjacent=False,
                     show_legend=True,
                 )
-        
+
         # Advanced generation settings
         with gr.Accordion("Generation Settings", open=False):
             with gr.Row():
@@ -382,7 +376,7 @@ def create_chatbot_demo():
                     minimum=0.0, maximum=1.0, value=0.1, step=0.1,
                     label="Visualization Delay (seconds)"
                 )
-        
+
         # Current response text box (hidden)
         current_response = gr.Textbox(
             label="Current Response",
@@ -390,60 +384,71 @@ def create_chatbot_demo():
             lines=3,
             visible=False
         )
-        
+
         # Clear button
         clear_btn = gr.Button("Clear Conversation")
-        
-        # HELPER FUNCTIONS
+
+        # ===== HELPER FUNCTIONS (all INSIDE create_chatbot_demo) =====
+
         def add_message(history, message, response):
             """Add a message pair to the history and return the updated history"""
             history = history.copy()
             history.append([message, response])
             return history
-            
-        def user_message_submitted(message, history, gen_length, steps, constraints, delay):
+
+        def user_message_submitted(message, sql_context, history, gen_length, steps, constraints, delay):
             """Process a submitted user message"""
             # Skip empty messages
             if not message.strip():
-                # Return current state unchanged
                 history_for_display = history.copy()
                 return history, history_for_display, "", [], ""
-                
-            # Add user message to history
-            history = add_message(history, message, None)
-            
-            # Format for display - temporarily show user message with empty response
+
+            # Prepend SQL context if provided
+            if sql_context and sql_context.strip():
+                combined_message = f"SQL Context: {sql_context.strip()}\n{message}"
+            else:
+                combined_message = message
+
+            # Add combined message to history (this is what the model sees)
+            history = add_message(history, combined_message, None)
+
+            # For now, show the combined message in the chat UI as well
             history_for_display = history.copy()
-            
-            # Clear the input
+
+            # Clear the input box
             message_out = ""
-            
-            # Return immediately to update UI with user message
+
             return history, history_for_display, message_out, [], ""
-            
-        def bot_response(history, gen_length, steps, constraints, delay, temperature, cfg_scale, block_length, remasking):
+
+        def bot_response(history, sql_context, gen_length, steps, constraints, delay,
+                         temperature, cfg_scale, block_length, remasking):
             """Generate bot response for the latest message"""
             if not history:
                 return history, [], ""
-                
-            # Get the last user message
+
+            # Get the last user message (already combined with SQL context)
             last_user_message = history[-1][0]
-            
+
             try:
                 # Format all messages except the last one (which has no response yet)
                 messages = format_chat_history(history[:-1])
-                
+
                 # Add the last user message
                 messages.append({"role": "user", "content": last_user_message})
-                
+
                 # Parse constraints
                 parsed_constraints = parse_constraints(constraints)
-                
+
+                # Feed SQL context into Text2SQLMasker (if used)
+                if remasking == "Text2SQL" and text2sql_masker is not None:
+                    text2sql_masker.set_context_words(sql_context or "")
+
                 # Generate response with visualization
                 vis_states, response_text = generate_response_with_visualization(
-                    model, tokenizer, device, 
-                    messages, 
-                    gen_length=gen_length, 
+                    model, tokenizer, device,
+                    messages,
+                    text2sql_masker=text2sql_masker,
+                    gen_length=gen_length,
                     steps=steps,
                     constraints=parsed_constraints,
                     temperature=temperature,
@@ -451,78 +456,79 @@ def create_chatbot_demo():
                     block_length=block_length,
                     remasking=remasking
                 )
-                
+
                 # Update history with the assistant's response
                 history[-1][1] = response_text
-                
+
                 # Return the initial state immediately
                 yield history, vis_states[0], response_text
-                
+
                 # Then animate through visualization states
                 for state in vis_states[1:]:
                     time.sleep(delay)
                     yield history, state, response_text
-                    
+
             except Exception as e:
                 error_msg = f"Error: {str(e)}"
                 print(error_msg)
-                
+
                 # Show error in visualization
                 error_vis = [(error_msg, "red")]
-                
+
                 # Don't update history with error
                 yield history, error_vis, error_msg
-        
+
         def clear_conversation():
             """Clear the conversation history"""
             return [], [], "", []
-        
-        # EVENT HANDLERS
-        
+
+        # ===== EVENT HANDLERS (also INSIDE create_chatbot_demo) =====
+
         # Clear button handler
         clear_btn.click(
             fn=clear_conversation,
             inputs=[],
             outputs=[chat_history, chatbot_ui, current_response, output_vis]
         )
-        
+
         # User message submission flow (2-step process)
+
         # Step 1: Add user message to history and update UI
         msg_submit = user_input.submit(
             fn=user_message_submitted,
-            inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
+            inputs=[user_input, sql_context_input, chat_history, gen_length,
+                    steps, constraints_input, visualization_delay],
             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
         )
-        
-        # Also connect the send button
+
         send_click = send_btn.click(
             fn=user_message_submitted,
-            inputs=[user_input, chat_history, gen_length, steps, constraints_input, visualization_delay],
+            inputs=[user_input, sql_context_input, chat_history, gen_length,
+                    steps, constraints_input, visualization_delay],
             outputs=[chat_history, chatbot_ui, user_input, output_vis, current_response]
         )
-        
-        # Step 2: Generate bot response
-        # This happens after the user message is displayed
+
+        # Step 2: Generate bot response after the user message is displayed
         msg_submit.then(
             fn=bot_response,
             inputs=[
-                chat_history, gen_length, steps, constraints_input, 
+                chat_history, sql_context_input, gen_length, steps, constraints_input,
                 visualization_delay, temperature, cfg_scale, block_length,
                 remasking_strategy
             ],
             outputs=[chatbot_ui, output_vis, current_response]
         )
-        
+
         send_click.then(
             fn=bot_response,
             inputs=[
-                chat_history, gen_length, steps, constraints_input, 
+                chat_history, sql_context_input, gen_length, steps, constraints_input,
                 visualization_delay, temperature, cfg_scale, block_length,
                 remasking_strategy
             ],
             outputs=[chatbot_ui, output_vis, current_response]
         )
-        
+
     return demo
 
 # Launch the demo
