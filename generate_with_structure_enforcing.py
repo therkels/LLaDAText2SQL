@@ -14,7 +14,6 @@ from datasets import load_dataset
 
 #Dynamic context prediction
 import dynamic_context.ContextPredictor as cp
-FIXED_BUCKETS = [16,32,48,64,96,128,512]
 
 def add_gumbel_noise(logits, temperature):
     '''
@@ -281,29 +280,6 @@ def extract_first_json(text):
             'raw_context': context
         }
 
-
-
-def predict_context_length(context_model, tokenizer, context, prompt, device='cuda'):
-    '''
-    Predict the context length bucket using the context predictor model.
-    '''
-    # Tokenize context and prompt
-    encoded_context = tokenizer(
-        prompt,
-        context,
-        truncation=True,
-        max_length=512,
-        return_tensors="pt"
-    )
-    input_ids = encoded_context.input_ids.to(device)
-    attention_mask = encoded_context.attention_mask.to(device)
-
-    with torch.no_grad():
-        logits = context_model(input_ids, attention_mask)
-        pred = torch.softmax(logits, dim=-1)
-        bucket_idx = torch.argmax(pred, dim=-1).item()
-    return FIXED_BUCKETS[bucket_idx]
-
 def parse_sql(output):
     pat = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
 
@@ -322,7 +298,7 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
     device = "cuda"
         # Setup dynamic context prediction
     SAVED_MODEL_PATH = "saved_models/predict_model.pt"
-    context_model = cp.ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
+    context_model = cp.ContextPredictor()
     context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
     context_model = context_model.to(device).eval()
     context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
@@ -357,7 +333,7 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
             prompt = instance['sql_prompt']
             _id = instance['id']
             # Predict context length bucket
-            context_length = predict_context_length(context_model, context_tokenizer, context, prompt, device=device)
+            context_length = cp.predict_context_length(context_model, context_tokenizer, context, prompt, device=device)
             sql = text_to_sql(model, tokenizer, context, prompt, block_length=context_length, gen_length=context_length)
             df.loc[len(df)] = [_id, sql]
             if save_path and autosave_every and (i % autosave_every == 0):
@@ -484,7 +460,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
     # Setup dynamic context prediction
     SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
-    context_model = cp.ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
+    context_model = cp.ContextPredictor()
     context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
     context_model = context_model.to(device).eval()
     context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
@@ -493,7 +469,7 @@ def main():
     instruction = "What is the total volume of timber sold by each salesperson, sorted by salesperson?"
 
     # Predict SQL length bucket
-    gen_length = predict_context_length(context_model, context_tokenizer, context, instruction, device)
+    gen_length = cp.predict_context_length(context_model, context_tokenizer, context, instruction, device)
     print(f"Predicted SQL generation length: {gen_length}")
 
     output = text_to_sql(

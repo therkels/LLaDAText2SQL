@@ -76,7 +76,7 @@ def valid_columns():
     ]
 
 def sql_instance_generator():
-    data = load_dataset("gretelai/synthetic_text_to_sql")["train"]
+    data = load_dataset("gretelai/synthetic_text_to_sql")["test"]
     for example in tqdm(convert_data_to_namedtuples(data), total=len(data)):
             db_obj = DatabaseHelper(":memory:")
             db_obj.insert_data(example.sql_context)
@@ -86,15 +86,17 @@ def sql_instance_generator():
 
 if __name__ == "__main__":
     file_path = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/synthetic_text_to_sql/synthetic_text_to_sql_test.snappy.parquet"
-    output_folder = "./data"
+    test_output_folder = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data"
     print("starting data processing")
     arrow_dataset = Dataset.from_generator(sql_instance_generator)
-    print("splitting data")
-    split_arrow_dataset = arrow_dataset.train_test_split(test_size=0.05, seed=68)
-    split_arrow_dataset.save_to_disk(output_folder)
+    arrow_dataset.save_to_disk(test_output_folder)
+    # print("splitting data")
+    # split_arrow_dataset = arrow_dataset.train_test_split(test_size=0.05, seed=68)
+    # split_arrow_dataset.save_to_disk(test_output_folder)
 
     print("loading data to verify")
-    reloaded = load_from_disk(output_folder)
+    reloaded = load_from_disk(test_output_folder)
     print(reloaded)
-    print("First train example:", reloaded['train'][0])
+    print("First train example:", reloaded[0]['sql_prompt'])
+    print(len(reloaded))
         

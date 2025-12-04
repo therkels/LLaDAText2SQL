@@ -12,7 +12,7 @@ import bisect
 FIXED_BUCKETS = [16,32,48,64,96,128,512]
 load_dotenv()
 class ContextPredictor(nn.Module):
-    def __init__(self, num_classes, dropout = 0.3, bert_requires_grad = False):
+    def __init__(self, num_classes=len(FIXED_BUCKETS), dropout = 0.3, bert_requires_grad = False):
         super().__init__()
         self.bert = AutoModel.from_pretrained("distilbert-base-uncased")
         for param in self.bert.parameters():
@@ -160,6 +160,30 @@ def main():
 
     model = ContextPredictor(num_classes=len(FIXED_BUCKETS), bert_requires_grad=False)
     train_predictor(model, train_dataloader, eval_dataloader)
+
+
+def predict_context_length(context_model, tokenizer, context, prompt, device='cuda'):
+    '''
+    Predict the context length bucket using the context predictor model.
+    '''
+    # These cannot change, as they are the classes the model was trained on 
+    fixed_buckets = [16,32,48,64,96,128,512]
+    # Tokenize context and prompt
+    encoded_context = tokenizer(
+        prompt,
+        context,
+        truncation=True,
+        max_length=512,
+        return_tensors="pt"
+    )
+    input_ids = encoded_context.input_ids.to(device)
+    attention_mask = encoded_context.attention_mask.to(device)
+
+    with torch.no_grad():
+        logits = context_model(input_ids, attention_mask)
+        pred = torch.softmax(logits, dim=-1)
+        bucket_idx = torch.argmax(pred, dim=-1).item()
+    return fixed_buckets[bucket_idx]
 
 if __name__ == "__main__":
     main()
