@@ -17,7 +17,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Run LLaDA Text2SQL evaluation.")
     parser.add_argument('--use_dynamic_context', action='store_true', help='Enable dynamic context prediction')
     parser.add_argument('--remask_strategy', type=str, default='low_confidence', help='Masking strategy to use during generation')
-    parser.add_argument('--max_eval', type=int, default=20, help='Maximum number of evaluations')
+    parser.add_argument('--max_eval', type=int, default=20000, help='Maximum number of evaluations')
     parser.add_argument('--save_path', type=str, default='eval_results.csv', help='Path to save evaluation results')
     return parser.parse_args()
 
