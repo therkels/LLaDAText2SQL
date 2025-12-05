@@ -1,0 +1,61 @@
+`torch_dtype` is deprecated! Use `dtype` instead!
+Using device: cuda
+Loading checkpoint shards:   0%|          | 0/6 [00:00<?, ?it/s]Loading checkpoint shards:  50%|█████     | 3/6 [00:00<00:00, 18.97it/s]Loading checkpoint shards:  83%|████████▎ | 5/6 [00:00<00:00, 18.65it/s]Loading checkpoint shards: 100%|██████████| 6/6 [00:00<00:00, 20.33it/s]
+----output----
+["$sql>\n    SELECT AVG(explainability_score) AS average_explainability_score\n    FROM creative_ai\n    WHERE region IN ('Europe', 'North America');\n</sql>"]
+--------------
+----output----
+["$sql>\n    SELECT COUNT(*) AS total_accidents\n    FROM Accidents\n    WHERE (launch_provider = 'SpaceX') OR (launch_providers = 'Blue Origin');\n</sql>"]
+--------------
+----output----
+['To find the maximum quantity of seafood sold in a single transaction, you can use the following SQL query:\n\n```sql\nSELECT MAX(quantity) AS max_quantity FROM sales;\n```']
+--------------
+----output----
+['```sql\n    SELECT SUM(budget) AS total_budget\n    FROM (SELECT * FROM Movies_Release_Year\n          WHERE release_year < 2010)\n    ```']
+--------------
+----output----
+['```sql\nSELECT (\n    SELECT id, plant_name, chemical_name, co2_emission_per_ton_produced\n    FROM co2_emissions\n    ORDER BY co2_emission_per_ton_produced DESC\n    LIMIT 2\n);\n```']
+--------------
+----output----
+["SELECT SUM(total_cost) AS total_cost_of_projects\nFROM climate_communication\nWHERE end_date > '2010-12-31' AND location = 'Antarctica';"]
+--------------
+----output----
+["<sql>\nSELECT AVG(publications) AS average_publications_per_org\nFROM (\n    SELECT publications\n    FROM researchers\n    WHERE organization = 'National Geographic'\n);\n```"]
+--------------
+----output----
+["```sql\nSELECT COUNT(dapp_id) AS dapp_count\nFROM dapp_ranking\nWHERE dapp_downloads IS NOT NULL\nAND dapp_region = 'Asia-Pacific';\n```"]
+--------------
+----output----
+["```sql\nSELECT \n    MAX(response_time) AS max_response_time\nFROM \n    emergency_calls \nWHERE \n    city = 'Los Angeles';\n```"]
+--------------
+----output----
+["<sql>\n    SELECT \n        AVG(value) AS average_cybersecurity\n    FROM contracts\n    WHERE \n        category = 'Cybersecurity';\n    </sql>"]
+--------------
+----output----
+['    <sql>\n    SELECT country, AVG(military_personnel) AS avg_military_personnel, country FROM Peacekeeping_Operations  GROUP BY country\n    </sql>']
+--------------
+----output----
+['<sql>\nSELECT client_id, MAX(investment) AS max_daily_invest\nFROM daily_investments\nGROUP BY client_id\nORDER BY client_id;\n</sql>']
+--------------
+----output----
+["<sql>\nSELECT p.PortName, SUM(ch.weight) AS total_weight\nFROM PORTS p\nLEFT JOIN CARGO_HANDLING ch ON p.ID = ch.PortID\nWHERE ch.CargoType = 'Fruit'\nGROUP BY p.PortName;\n</sql>"]
+--------------
+----output----
+['sql>SELECT container_type, MIN(fuel_consumption) AS min_fuel_consumption FROM container_ships WHERE year = 2016 GROUP BY container_type;']
+--------------
+----output----
+["<sql> SELECT region, SUM(amount) AS total_investment_in_health FROM investments WHERE sector = 'Healthcare' AND region = 'North America' GROUP BY region; </sql>"]
+--------------
+----output----
+["<sql>\nSELECT COUNT(*) AS donor_count FROM Donors WHERE region = 'South West';\n</sql>"]
+--------------
+----output----
+['<sql>SELECT p.ProgramName, SUM(d.DonationAmount) AS TotalDonatedAmount\nFROM (\n FROM Programs p\n  INNER JOIN Donations d ON p.ProgramID = d.ProgramID\n GROUP BY p.ProgramName;\n</sql>']
+--------------
+----output----
+["<sql>SELECT COUNT(*) AS count FROM wind_farms WHERE country = 'Canada' AND ( installation_year BETWEEN 2015 AND 2018 ) ;</sql>"]
+--------------
+----output----
+["```sql\nSELECT id, name, country, budget\nFROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50.0 AND 200.0\n```"]
+--------------
+Saving results
