@@ -293,7 +293,7 @@ def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_len
     attention_mask = encoded_outputs['attention_mask'].to(device)
     # print("Starting Generation")
     # print(f"gen length:{gen_length}, block_length:{block_length}")
-    out = generate_original(model, tokenizer, input_ids, attention_mask=attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0.7, cfg_scale=0., remasking=remask_strategy, text2sql_masker=text2sql_masker)
+    out = generate_original(model, tokenizer, input_ids, attention_mask=attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0.4, cfg_scale=0., remasking=remask_strategy, text2sql_masker=text2sql_masker)
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     parsed_sql = parse_sql(output)
     return parsed_sql
