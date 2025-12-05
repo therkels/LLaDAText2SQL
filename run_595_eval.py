@@ -10,7 +10,14 @@ import pandas as pd
 import time
 import os
 from datasets import load_from_disk
+import argparse
 
+def get_args():
+    parser = argparse.ArgumentParser(description="Run LLaDA Text2SQL evaluation.")
+    parser.add_argument('--use_dynamic_context', action='store_true', help='Enable dynamic context prediction')
+    parser.add_argument('--remask_strategy', type=str, default='low_confidence', help='Masking strategy to use during generation')
+    parser.add_argument('--max_eval', type=int, default=20, help='Maximum number of evaluations')
+    return parser.parse_args()
 
 #Dynamic context prediction
 import dynamic_context.ContextPredictor as cp
@@ -67,7 +74,7 @@ def generate_original(model, tokenizer, prompt, text2sql_masker=None, attention_
         confidence_eos_eot_inf: Whether to set the confidence of EOS and EoT token to -inf. See Appendix B.4 of LLaDA for details
     '''
     start = time.time()
-    print(f"start: {time.time() - start}")
+    # print(f"start: {time.time() - start}")
     x = torch.full((prompt.shape[0], prompt.shape[1] + gen_length), mask_id, dtype=torch.long).to(model.device)
     x[:, :prompt.shape[1]] = prompt.clone()
 
@@ -170,14 +177,15 @@ def parse_sql(output):
     r = [first_in(s) for s in output]
     return r
 
-def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
+def generate_eval_sql(dataset, args, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
     device = "cuda"
-        # Setup dynamic context prediction
-    SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
-    context_model = cp.ContextPredictor()
-    context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
-    context_model = context_model.to(device).eval()
-    context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+    # Setup dynamic context prediction
+    if args.use_dynamic_context:
+        SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
+        context_model = cp.ContextPredictor()
+        context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
+        context_model = context_model.to(device).eval()
+        context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
 
     if model is None or tokenizer is None:
         model = AutoModel.from_pretrained(
@@ -201,12 +209,15 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
             prompt = instance['sql_prompt']
             _id = instance['id']
             # Predict context length bucket
-            context_length = cp.predict_context_length(context_model, context_tokenizer, context, prompt, device=device)
-            sql = text_to_sql(model, tokenizer, context, prompt, block_length=context_length, gen_length=context_length)
+            if args.use_dynamic_context:
+                context_length = cp.predict_context_length(context_model, context_tokenizer, context, prompt, device=device) + 10
+            else:
+                context_length = 256
+            sql = text_to_sql(model, tokenizer, context, prompt, remask_strategy=args.remask_strategy, block_length=context_length, gen_length=context_length)
             df.loc[len(df)] = [_id, sql]
             if save_path and autosave_every and (i % autosave_every == 0):
                 atomic_save()
-            if eval_count > 20:
+            if (eval_count+1) % args.max_eval == 0:
                 break
     except Exception as e:
         # catch-all for anything else
@@ -220,7 +231,7 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
 
 
 
-def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_length=32):
+def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_length=256, block_length=32):
     device = 'cuda'
     # print("building prompts")
   # build flat prompts
@@ -228,6 +239,7 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_le
             "Given a schema and prompt, generate the SQL.\n"
             "Wrap your SQL in <sql>...</sql>.\n"
             "Only the first SQL block will be considered.\n\n"
+            "Do Not use name aliasing in the SQL.\n\n"
             f"Schema:\n{context}\n\nPrompt:\n{instruction}"
     ]
     # print(prompts)
@@ -254,29 +266,18 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_le
     attention_mask = encoded_outputs['attention_mask'].to(device)
     # print("Starting Generation")
     # print(f"gen length:{gen_length}, block_length:{block_length}")
-    out = generate_original(model, tokenizer, input_ids,attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking='low_confidence')
+    out = generate_original(model, tokenizer, input_ids,attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking=remask_strategy)
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
-    print(f"---output---\n{output}\n--------------")
     parsed_sql = parse_sql(output)
     return parsed_sql
 
 def main():
+    args = get_args()
     device = 'cuda'
     print(f"Using device: {device}")
-    test_folder = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data"
-    arrow_dataset = load_from_disk(test_folder)
+    arrow_dataset = load_from_disk("/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data")
 
-    model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
-    # Setup dynamic context prediction
-    SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
-    context_model = cp.ContextPredictor()
-    context_model.load_state_dict(torch.load(SAVED_MODEL_PATH, map_location=device))
-    context_model = context_model.to(device).eval()
-    context_tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
-
-
-    generate_eval_sql(arrow_dataset, save_path="output_sql.csv")
+    generate_eval_sql(arrow_dataset, args, save_path="eval.csv")
 
 
 if __name__ == '__main__':

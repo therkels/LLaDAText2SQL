@@ -1,0 +1,20 @@
+id,out_sql
+1,"[""SELECT AVG(explainability_score) AS average_explainability_score \nFROM creative_ai \nWHERE region IN ('Europe', 'North America');""]"
+3,"[""SELECT COUNT(*) FROM Accidents WHERE launch_provider IN ('SpaceX', 'Blue Origin');""]"
+4,['SELECT MAX(quantity) FROM sales;']
+5,['SELECT SUM(budget) AS total_budget\nFROM Movies_Release_Year\nWHERE release_year < 2010;']
+7,[None]
+8,"[""SELECT total_cost \nFROM climate_communication\nWHERE end_date > 2010-01-01 AND location = 'Antarctica';""]"
+10,"[""SELECT AVG(publications) AS average_publications\nFROM researchers\nWHERE organization = 'National Geographic';""]"
+11,"[""SELECT SUM(dapp_downloads) AS total_downloads\nFROM dapp_ranking\nWHERE dapp_region = 'Asia-Pacific';""]"
+13,"[""SELECT MAX(response_time)\nFROM emergency_calls\nWHERE city = 'Los Angeles';""]"
+15,"[""SELECT AVG(value) FROM contracts WHERE category = 'Cybersecurity';""]"
+17,"['SELECT AVG(military_personnel) AS average_military_personnel, \n       COUNT(*) AS count\nFROM Peacekeeping_Operations\nGROUP BY country;']"
+18,"['SELECT client_id, MAX(investment) AS max_investment\nFROM daily_investments\nGROUP BY client_id;']"
+19,"[""SELECT p.PortName, SUM(Weight) AS TotalWeight\nFROM PORTS p\nJOIN CARGO_HANDLING ch ON p.ID = ch.PortID\nWHERE ch.CargoType = 'Fruit'\nGROUP BY p.PortName;""]"
+20,"['SELECT container_type, MIN(fuel_consumption) AS min_fuel\nFROM container_ships\nWHERE year = 2016\nGROUP BY container_type;']"
+22,"[""SELECT region, SUM(amount) AS total_investment_in_healthcare \nFROM investments\nWHERE sector = 'Healthcare'\nGROUP BY region;""]"
+24,"[""SELECT COUNT(*) \nFROM Donors\nWHERE region = 'South West';""]"
+25,"['SELECT p.ProgramName, SUM(d.DonationAmount) AS TotalDonation\nFROM Programs p\nJOIN DonorsPrograms dp ON true\nLEFT JOIN Donations d ON dp.ProgramID = d.ProgramID\nGROUP BY p.ProgramName;']"
+30,"[""SELECT COUNT(*)\nFROM wind_farms\nWHERE country = 'Canada' AND installation_year BETWEEN 2015 AND 2018;""]"
+31,"[""SELECT id, name, country, budget FROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50.0 AND 200.0;""]"
