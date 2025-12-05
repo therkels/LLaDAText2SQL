@@ -150,11 +150,18 @@ def extract_first_json(text):
     
 
 def parse_sql(output):
-    pat = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
+    print(f"----output----\n{output}\n--------------")
+    xml_pattern = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
+    md_pattern = re.compile(r"```sql(.*?)```", re.DOTALL)
 
     def first_in(s: str):
-        m = pat.search(s)
-        return m.group(1) if m else None
+        m = xml_pattern.search(s)
+        if m:
+            return m.group(1).strip()
+        m = md_pattern.search(s)
+        if m:
+            return m.group(1).strip()
+        return None
 
     if isinstance(output, str):
         return first_in(output)
@@ -199,7 +206,7 @@ def generate_eval_sql(dataset, model=None, tokenizer=None, device=None, batch_si
             df.loc[len(df)] = [_id, sql]
             if save_path and autosave_every and (i % autosave_every == 0):
                 atomic_save()
-            if eval_count > 100:
+            if eval_count > 20:
                 break
     except Exception as e:
         # catch-all for anything else
@@ -249,6 +256,7 @@ def text_to_sql(model, tokenizer, context, instruction, gen_length=256, block_le
     # print(f"gen length:{gen_length}, block_length:{block_length}")
     out = generate_original(model, tokenizer, input_ids,attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking='low_confidence')
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
+    print(f"---output---\n{output}\n--------------")
     parsed_sql = parse_sql(output)
     return parsed_sql
 

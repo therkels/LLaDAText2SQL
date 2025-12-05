@@ -1,2 +1,22 @@
 id,out_sql
-1,[None]
+1,"[""SELECT AVG(explainability_score) \nFROM creative_ai\nWHERE region IN ('Europe', 'North America');""]"
+3,"[""SELECT COUNT(*) \nFROM Accidents \nWHERE launch_provider = 'SpaceX' OR launch_provider = 'Blue Origin';""]"
+4,"[""SELECT MAX(quantity) AS max_quantity\nFROM sales\nWHERE location IN ('Northeast', 'Midwest');""]"
+5,['SELECT SUM(budget) AS total_budget FROM Movies_Release_Year WHERE release_year < 2010;']
+7,"['SELECT plant_name, co2_emission_per_ton_produced \nFROM co2_emissions\nORDER BY co2_emission_per_ton_produced DESC\nLIMIT 2;']"
+8,[None]
+10,"[""SELECT AVG(publications) AS average_publications_per_researcher\nFROM researchers\nWHERE organization = 'National Geographic';""]"
+11,"[""SELECT SUM(dapp_downloads) AS total\nFROM dapp_ranking\nWHERE dapp_region = 'Asia-Pacific';""]"
+13,"[""SELECT MAX(response_time) AS max_response_time\nFROM emergency_calls \nWHERE city = 'Los Angeles';""]"
+15,"[""SELECT AVG(value) AS average_cybersecurity_value \nFROM contracts \nWHERE category = 'Cybersecurity';""]"
+17,['SELECT AVG(military_personnel) AS average_military_personnel FROM Peacekeeping_Operations GROUP BY country;']
+18,"['SELECT client_id, MAX(investment) AS max_investment\nFROM daily_investments GROUP BY client_id;']"
+19,"[""SELECT PortName, SUM(Weight) AS TotalCargoWeight\nFROM CARGO_HANDLING\nWHERE CargoType = 'Fruit'\nGROUP BY PortID FROM PORTS\nGROUP BY PortName;""]"
+20,[None]
+22,"[""SELECT region, SUM(amount) AS total_investment FROM investments WHERE sector = 'Healthcare' GROUP BY region;""]"
+24,[None]
+25,"['SELECT ProgramName, SUM(DonationAmount) AS TotalDonationAmount\nFROM Programs p\nJOIN DonorsPrograms dp ON p.ProgramID = dp.ProgramID\nGROUP BY ProgramName;']"
+30,[None]
+31,"[""SELECT * FROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50 AND 200;""]"
+33,"[""SELECT AVG(energy_rating) FROM energy_efficiency WHERE building_type = 'Commercial' AND location = 'Texas';""]"
+35,"['SELECT player, AVG(running_speed) AS average_running_speed\nFROM world_cup \nGROUP BY player;']"
