@@ -19,4 +19,4 @@ id,out_sql
 30,[None]
 31,"[""SELECT * FROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50 AND 200;""]"
 33,"[""SELECT AVG(energy_rating) FROM energy_efficiency WHERE building_type = 'Commercial' AND location = 'Texas';""]"
-35,"['SELECT player, AVG(running_speed) AS average_running_speed\nFROM world_cup \nGROUP BY player;']"
+35,"['SELECT player, AVG(running_speed) AS running_speed_avg \nFROM world_cup \nGROUP BY player;']"
