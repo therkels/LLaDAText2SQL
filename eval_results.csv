@@ -1,0 +1,2 @@
+id,out_sql
+1,"[""SELECT AVG(explainability_score) AS average_explainability_score\nFROM creative_ai\nWHERE region IN ('Europe', 'North America');""]"

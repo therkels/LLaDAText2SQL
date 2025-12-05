@@ -1,0 +1,20 @@
+id,out_sql,time_taken
+1,"[""SELECT AVG(explainability_score) AS average_explainability_score\n    FROM creative_ai\n    WHERE region IN ('Europe', 'North America');""]",14.167011022567749
+3,"[""SELECT COUNT(*) AS total_accidents \nFROM Accidents \nWHERE ( launch_provider = 'SpaceX' ) OR ( launch_provider = 'Blue Origin' )""]",12.81117844581604
+4,['SELECT quantity AS max_quant FROM sales AS s WHERE quantity = (SELECT quantity FROM sales AS s WHERE quantity = (SELECT MAX(quantity) FROM sales)) AS t;'],11.744429588317871
+5,['SELECT SUM(budget) AS total_budget_before_2010\n    FROM Movies_Release_Year WHERE release_year < 2010;'],13.796683549880981
+7,"['SELECT plant_name, chemical_name, co2_emission_per_ton_produced\n   FROM co2_emissions\n ORDER BY co2_emission_per_ton_produced DESC\n   LIMIT 2;']",14.107043266296387
+8,"[""SELECT SUM(total_cost) AS total_cost\nFROM climate_communication\nWHERE YEAR(end_date > 2010) AND location = 'Antarctica';""]",10.694546937942505
+10,"[""SELECT AVG(p.publications) AS average_publishings\n    FROM researchers AS p\n    WHERE organization = 'National Geographic';""]",13.346466541290283
+11,[None],13.433188676834106
+13,"[""SELECT (\n    SELECT MAX(response_time) AS max_response_time\n    FROM emergency_calls\n    WHERE city = 'Los Angeles'\n) AS max_response_time_result;""]",8.383215427398682
+15,"[""SELECT AVG(value1) AS average_contract_value FROM (SELECT value AS value1 FROM contracts WHERE category = 'Cybersecurity') AS SELECT * FROM dual WHERE TRUE;""]",13.943051099777222
+17,['SELECT AVG(military_personnel) AS average_military FROM (SELECT country FROM Peacekeeping_Operations GROUP BY country) AS country_group FROM Peacekeeping_Operations;'],11.379093408584595
+18,"['SELECT client_id, MAX(investment) AS max_investment \n    FROM daily_investments \n    GROUP BY client_id']",13.50642704963684
+19,"[""SELECT p.PortName, SUM(c.weight) AS total_cargo_weight FROM PORTS p\n LEFT JOIN CARGO_HANDLING c ON p.ID = c.PortID WHERE c.CargoType = 'Fruit'\n GROUP BY p.PortName""]",14.292867660522461
+20,"['SELECT container_type, MIN(fuel_consumption) AS min_fuel_consum FROM container_ships WHERE year = 2016 GROUP BY container_type;']",13.826059579849243
+22,"[""SELECT region, SUM(amount) AS total_investment  FROM ( SELECT region, amount FROM investments  WHERE sector = 'Healthcare'  GROUP BY region ) ;""]",13.704067707061768
+24,"[""SELECT COUNT(*) AS donor_count FROM Donors WHERE region = 'South West';""]",10.51565957069397
+25,[None],17.018329620361328
+30,"[""SELECT COUNT(*) \nFROM wind_farms\nWHERE country = 'Canada' AND installation_year BETWEEN 2015 AND 2018;""]",9.154150247573853
+31,"[""SELECT name, country, budget FROM renewable_project WHERE country = 'India' AND budget BETWEEN 50000 AND 200000;""]",12.956953525543213

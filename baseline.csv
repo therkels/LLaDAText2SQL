@@ -1,0 +1,20 @@
+id,out_sql
+1,"[""SELECT AVG(explainability_score) AS average_explainability_score\nFROM creative_ai\nWHERE region IN ('Europe', 'North America');""]"
+3,"[""SELECT COUNT(*) AS accident_count\nFROM Accidents\nWHERE launch_provider = 'SpaceX' OR launch_provider = 'Blue Origin';""]"
+4,['SELECT MAX(quantity) AS max_quantity\nFROM sales;']
+5,['SELECT SUM(budget) AS total_budget\nFROM Movies_Release_Year\nWHERE release_year < 2010;']
+7,['SELECT plant_name\nFROM co2_emissions\nORDER BY co2_emission_per_ton_produced DESC\nLIMIT 2;']
+8,"[""SELECT SUM(total_cost) AS total_cost FROM climate_communication WHERE end_date > '2010-01-01' AND location = 'Antarctica';""]"
+10,"[""SELECT AVG(publications) AS average_publications\nFROM researchers\nWHERE organization = 'National Geographic';""]"
+11,"[""SELECT SUM(dapp_downloads) AS total_downloads\nFROM dapp_ranking\nWHERE dapp_region = 'Asia-Pacific';""]"
+13,"[""SELECT MAX(response_time) AS max_response_time\nFROM emergency_calls\nWHERE city = 'Los Angeles';""]"
+15,"[""SELECT AVG(value) AS average_cybersecurity_value\nFROM contracts\nWHERE category = 'Cybersecurity';""]"
+17,['SELECT AVG(military_personnel) AS average_military_personnel FROM Peacekeeping_Operations;']
+18,"['SELECT client_id, MAX(investment) AS max_investment\nFROM daily_investments\nGROUP BY client_id;']"
+19,[None]
+20,"['SELECT container_type, MIN(fuel_consumption) AS min_fuel_consumption FROM container_ships WHERE year = 2016 GROUP BY container_type;']"
+22,"[""SELECT region, SUM(amount) AS total_investment FROM investments WHERE sector = 'Healthcare' GROUP BY region;""]"
+24,"[""SELECT COUNT(*) AS donor_count\nFROM Donors\nWHERE region = 'South West';""]"
+25,"['SELECT ProgramName, SUM(DonationAmount) AS TotalDonation\nFROM Donations\nGROUP BY ProgramName;']"
+30,"[""SELECT COUNT(*) AS wind_farm_count\nFROM wind_farms\nWHERE country = 'Canada'\n  AND installation_year BETWEEN 2015 AND 2018;""]"
+31,"[""SELECT * FROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50.0 AND 200.0;""]"

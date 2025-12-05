@@ -18,6 +18,7 @@ def get_args():
     parser.add_argument('--use_dynamic_context', action='store_true', help='Enable dynamic context prediction')
     parser.add_argument('--remask_strategy', type=str, default='low_confidence', help='Masking strategy to use during generation')
     parser.add_argument('--max_eval', type=int, default=20, help='Maximum number of evaluations')
+    parser.add_argument('--save_path', type=str, default='eval_results.csv', help='Path to save evaluation results')
     return parser.parse_args()
 
 #Dynamic context prediction
@@ -124,7 +125,6 @@ def generate_original(model, tokenizer, prompt, text2sql_masker=None, attention_
             elif remasking == 'Text2SQL':
                 if text2sql_masker is None:
                     raise ValueError("Text2SQL remasking requires a Text2SQLMasker instance.")
-
                 x0_p = text2sql_masker.get_masking_confidence_scores(x0, tokenizer)
             else:
                 raise NotImplementedError(remasking)
@@ -181,6 +181,8 @@ def parse_sql(output):
 
 def generate_eval_sql(dataset, args, model=None, tokenizer=None, device=None, batch_size=1, save_path=None, autosave_every=50):
     device = "cuda"
+    text2sql_masker = Text2SQLMasker()
+
     # Setup dynamic context prediction
     if args.use_dynamic_context:
         SAVED_MODEL_PATH = "/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/saved_models/predict_model.pt"
@@ -195,7 +197,7 @@ def generate_eval_sql(dataset, args, model=None, tokenizer=None, device=None, ba
         ).to(device).eval()
         tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
-    df = pd.DataFrame(columns=["id", "out_sql"])
+    df = pd.DataFrame(columns=["id", "out_sql","time_taken"])
 
     def atomic_save():
         if not save_path: return
@@ -206,17 +208,29 @@ def generate_eval_sql(dataset, args, model=None, tokenizer=None, device=None, ba
     try:
         eval_count = 0
         for i,instance in enumerate(dataset):
+            time_start = time.time()
             eval_count += 1
             context = instance['sql_context']
             prompt = instance['sql_prompt']
             _id = instance['id']
+            if args.remask_strategy == 'Text2SQL':
+                text2sql_masker.set_context_words(context)
             # Predict context length bucket
             if args.use_dynamic_context:
                 context_length = cp.predict_context_length(context_model, context_tokenizer, context, prompt, device=device) + 10
             else:
                 context_length = 256
-            sql = text_to_sql(model, tokenizer, context, prompt, remask_strategy=args.remask_strategy, block_length=context_length, gen_length=context_length)
-            df.loc[len(df)] = [_id, sql]
+            sql = text_to_sql(
+                model,
+                tokenizer,
+                context,
+                prompt,
+                remask_strategy=args.remask_strategy,
+                block_length=context_length,
+                gen_length=context_length,
+                text2sql_masker=text2sql_masker)
+            time_end = time.time()
+            df.loc[len(df)] = [_id, sql, time_end - time_start]
             if save_path and autosave_every and (i % autosave_every == 0):
                 atomic_save()
             if (eval_count+1) % args.max_eval == 0:
@@ -233,18 +247,29 @@ def generate_eval_sql(dataset, args, model=None, tokenizer=None, device=None, ba
 
 
 
-def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_length=256, block_length=32):
+def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_length=256, block_length=32, text2sql_masker=None):
     device = 'cuda'
     # print("building prompts")
   # build flat prompts
-    prompts = [
-            "Given a schema and prompt, generate the SQL.\n"
-            "Wrap your SQL in <sql>...</sql>.\n"
-            "Only the first SQL block will be considered.\n\n"
-            "Do Not use name aliasing in the SQL.\n\n"
-            f"Schema:\n{context}\n\nPrompt:\n{instruction}"
-    ]
-    # print(prompts)
+    prompt = f"""
+    You are a senior analyst who is an expert in SQL query generation.
+    Given a schema and prompt, generate the SQL.
+    ## Rules for generation
+    1. **Wrap the SQL with <sql>...</sql> tags.** Only the first SQL block will be considered.
+    2. **If using name aliasing, use column_x, where x is a integer**.
+    ## Schema:
+    {context}
+    ## Prompt:
+    {instruction}
+    """
+    # prompts = [
+    #         "Given a schema and prompt, generate the SQL.\n"
+    #         "Wrap your SQL in <sql>...</sql>.\n"
+    #         "Only the first SQL block will be considered.\n\n"
+    #         "Do Not use name aliasing in the SQL.\n\n"
+    #         f"Schema:\n{context}\n\nPrompt:\n{instruction}"
+    # ]
+    # # print(prompts)
                   
     # The LLaDA architecture theoretically supports both left-padding and right-padding. 
     # However, the sampling code implementation is simpler with left-padding.
@@ -255,7 +280,7 @@ def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_len
     assert tokenizer.pad_token_id != 126336
 
     # Add special tokens for the Instruct model. The Base model does not require the following two lines.
-    messages = [{"role": "user", "content": prompt} for prompt in prompts]
+    messages = [{"role": "user", "content": prompt}]
     prompts = [tokenizer.apply_chat_template([message], add_generation_prompt=True, tokenize=False) for message in messages]
 
     encoded_outputs = tokenizer(
@@ -268,8 +293,7 @@ def text_to_sql(model, tokenizer, context, instruction, remask_strategy, gen_len
     attention_mask = encoded_outputs['attention_mask'].to(device)
     # print("Starting Generation")
     # print(f"gen length:{gen_length}, block_length:{block_length}")
-    text2sql_masker = Text2SQLMasker()
-    out = generate_original(model, tokenizer, input_ids, attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0., cfg_scale=0., remasking=remask_strategy)
+    out = generate_original(model, tokenizer, input_ids, attention_mask=attention_mask, steps=128, gen_length=gen_length, block_length=block_length, temperature=0.7, cfg_scale=0., remasking=remask_strategy, text2sql_masker=text2sql_masker)
     output = tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)
     parsed_sql = parse_sql(output)
     return parsed_sql
@@ -280,7 +304,7 @@ def main():
     print(f"Using device: {device}")
     arrow_dataset = load_from_disk("/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data")
 
-    generate_eval_sql(arrow_dataset, args, save_path="eval.csv")
+    generate_eval_sql(arrow_dataset, args, save_path=args.save_path)
 
 
 if __name__ == '__main__':

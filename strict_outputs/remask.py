@@ -80,7 +80,7 @@ class Text2SQLMasker:
             device=device,
             dtype=torch.float32,
         )
-        print("getting confidence for Text2Sql")
+        # print("getting confidence for Text2Sql")
         phrase_token_ids = self._phrase_token_ids
 
         for b in range(batch_size):
@@ -98,7 +98,7 @@ class Text2SQLMasker:
                     if seq[i:i + n] == list(phrase_ids):
                         for k in range(n):
                             sql_positions.add(i + k)
-                            print(f"Found SQL token at position {i + k} in batch {b}")
+                            # print(f"Found SQL token at position {i + k} in batch {b}")
 
             if sql_positions:
                 sql_positions = sorted(sql_positions)

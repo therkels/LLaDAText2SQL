@@ -1,0 +1,20 @@
+id,out_sql
+1,"[""SELECT AVG(explainability_score) AS average_explainability_score\nFROM creative_ai\nWHERE region = 'Europe' OR region = 'North America';""]"
+3,"[""SELECT COUNT(launch_provider) AS accident_count\n    FROM Accidents\n    WHERE launch_provider IN ('SpaceX', 'Blue Origin');""]"
+4,"[""SELECT MAX(quantity) AS max_quantity\n    FROM sales \n    WHERE location IN ('Northeast', 'Midwest', 'West');""]"
+5,['SELECT SUM(budget) AS total_budget\n FROM Movies_Release_Year \n WHERE release_year < 2010;']
+7,"['SELECT plant_name, SUM(co2_emission_per_ton_produced AS total_co2_emissions) FROM co2_emissions GROUP BY plant_name ORDER BY SUM(co2_emissions_per_ton) DESC LIMIT 2 OFFSET 0;']"
+8,"[""SELECT SUM(total_cost) AS total_cost \nFROM climate_communication \nWHERE end_date > '2010-%' AND location = 'Antarctica';""]"
+10,[None]
+11,"[""SELECT (\n    SELECT COUNT(dapp_downloads) AS total_downloads\n    FROM dapp_ranking\n    WHERE dapp_region = 'Asia-Pacific'\n);""]"
+13,"[""SELECT MAX (\n    SELECT MAX(response_time) AS max_response_time\n    FROM emergency_calls\n    WHERE city = 'Los Angeles'\n) AS max_response_time;""]"
+15,"[""SELECT AVG(value) AS average_cybersecurity_value FROM contracts\nWHERE category = 'Cybersecurity';""]"
+17,"['SELECT AVG(military_personnel) AS average_military_personnel\nFROM Peacekeeping_Operations\nGROUP BY country, COUNT(*) AS country_count']"
+18,"['SELECT client_id, MAX(investment) AS max_daily_investment FROM daily_investments WHERE date = client_id.date GROUP BY client_id;']"
+19,"[""SELECT p.PortName, SUM(ch.weight) AS total_cargo_weight\nFROM PORTS p\nJOIN CARGO_HANDLING ch ON p.ID = ch.PortID\nWHERE ch.CargoType = 'Fruit'\nGROUP BY p.PortName;""]"
+20,"['SELECT container_type, MIN(fuel_consumption) AS min_fuel_consum FROM container_ships WHERE year = 2016 GROUP BY container_type;']"
+22,"[""SELECT region, SUM(amount) AS total_investment \nFROM investments\nWHERE sector = 'Healthcare'\nGROUP BY region;""]"
+24,"[""SELECT COUNT(*) AS south_west_count FROM Donors WHERE region = 'South West';""]"
+25,"['SELECT p.ProgramName, SUM(dp.DonationAmount) AS TotalDonation\nFROM Programs p\nLEFT JOIN DonorsPrograms dp ON p.ProgramID = dp.ProgramID\nGROUP BY p.ProgramName;']"
+30,[None]
+31,"[""SELECT name, country, budget\nFROM renewable_project\nWHERE country = 'India' AND budget BETWEEN 50.0 AND 200.0;""]"
