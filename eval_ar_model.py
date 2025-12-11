@@ -55,7 +55,7 @@ def main():
     )
 
     parser.add_argument('--input-file', type=str, default='/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data')
-    parser.add_argument('--output-file', type=str, default='eval_results_ar.csv')
+    parser.add_argument('--output-file', type=str, default='/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/eval_results_ar.csv')
     parser.add_argument('--max_eval', type=int, default=20000)
     parser.add_argument('--model-name', type=str, default='Qwen/Qwen2.5-7B-Instruct')
     parser.add_argument('--cache-dir', type=str, default=None)
