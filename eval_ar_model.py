@@ -1,24 +1,14 @@
-'''
-Much of the LLVM setup was referenced from CSE595 HW 4. Used much of the tempalte code to configure the model.
-'''
-
-
 import torch
 import numpy as np
-import torch.nn.functional as F
-
-from transformers import AutoTokenizer, AutoModel
-import json
-import re
 import pandas as pd
-# from dataset.synthetic_text_to_sql.get_raw_data import get_raw_data, convert_data_to_namedtuples
 import time
 import os
-from datasets import load_from_disk
+import json
+import re
 import argparse
-
-from llvm import LLM, SamplingParams
-
+from transformers import AutoTokenizer
+from datasets import load_from_disk
+from vllm import LLM, SamplingParams
 
 def create_prompt(context: str, instruction: str):
     prompt = f"""
@@ -35,7 +25,6 @@ def create_prompt(context: str, instruction: str):
     return prompt
 
 def parse_sql(output):
-    print(f"----output----\n{output}\n--------------")
     xml_pattern = re.compile(r"<sql>(.*?)</sql>", re.DOTALL)
     md_pattern = re.compile(r"```sql(.*?)```", re.DOTALL)
 
@@ -50,10 +39,14 @@ def parse_sql(output):
 
     if isinstance(output, str):
         return first_in(output)
-
-    # assume list/tuple of strings
     r = [first_in(s) for s in output]
     return r
+
+def atomic_save(save_path, df):
+    if not save_path: return
+    tmp = save_path + ".tmp"
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, save_path)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -61,149 +54,148 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Input/Output files
-    parser.add_argument(
-        '--input-file',
-        type=str,
-        default='train_dev.csv',
-        help='Path to input CSV file with essays'
-    )
-
-    parser.add_argument(
-        '--output-file',
-        type=str,
-        default='essay_scores.jsonl',
-        help='Path to output JSONL file with results'
-    )
-
-    parser.add_argument(
-        '--limit',
-        type=int,
-        default=None,
-        help='Limit number of essays to process (for testing)'
-    )
-
-    parser.add_argument(
-        '--evaluate',
-        action='store_true',
-        help='Evaluate predictions against ground truth scores'
-    )
-
-    # Model configuration
-    parser.add_argument(
-        '--model-name',
-        type=str,
-        default='Qwen/Qwen2.5-7B-Instruct',
-        help='Model name or path (e.g., "meta-llama/Llama-2-7b-chat-hf", "Qwen/Qwen2.5-7B-Instruct")'
-    )
-
-    parser.add_argument(
-        '--cache-dir',
-        type=str,
-        default=None,
-        help='Directory to cache models (default: HuggingFace cache)'
-    )
-
-    parser.add_argument(
-        '--tensor-parallel-size',
-        type=int,
-        default=None,
-        help='Number of GPUs for tensor parallelism (default: auto-detect)'
-    )
-
-    # Processing settings
-    parser.add_argument(
-        '--chunk-size',
-        type=int,
-        default=100,
-        help='Number of essays to process in each batch (default: 100)'
-    )
-
-    parser.add_argument(
-        '--use-chat-template',
-        action='store_true',
-        default=True,
-        help='Use chat template formatting (for chat models)'
-    )
-
-    parser.add_argument(
-        '--no-chat-template',
-        dest='use_chat_template',
-        action='store_false',
-        help='Disable chat template (for base/completion models)'
-    )
-
-    parser.add_argument(
-        '--temperature',
-        type=float,
-        default=0.3,
-        help='Sampling temperature (0.0 = deterministic, higher = more random)'
-    )
-
-    parser.add_argument(
-        '--top-p',
-        type=float,
-        default=0.95,
-        help='Top-p (nucleus) sampling parameter'
-    )
+    parser.add_argument('--input-file', type=str, default='/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/test_data')
+    parser.add_argument('--output-file', type=str, default='eval_results_ar.csv')
+    parser.add_argument('--max_eval', type=int, default=20000)
+    parser.add_argument('--model-name', type=str, default='Qwen/Qwen2.5-7B-Instruct')
+    parser.add_argument('--cache-dir', type=str, default=None)
+    parser.add_argument('--tensor-parallel-size', type=int, default=None)
+    parser.add_argument('--chunk-size', type=int, default=20) # Increased default chunk size for speed
+    parser.add_argument('--use-chat-template', action='store_true', default=True)
+    parser.add_argument('--temperature', type=float, default=0.3)
+    parser.add_argument('--top-p', type=float, default=0.95)
+    parser.add_argument('--max-tokens', type=int, default=256)
+    parser.add_argument('--top-k', type=int, default=50)
+    
 
     args = parser.parse_args()
+    
+    save_path = args.output_file
+    autosave_every = 50
+    
     CACHE_DIR = '/scratch/eecs595f25_class_root/eecs595f25_class/llada_data/vllm_cache'
-    tokenizer_kwargs = {'trust_remote_code': True,
-                        'cache_dir': CACHE_DIR}
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name,
-        **tokenizer_kwargs
-    )
+    
+    # tokenizer setup
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True, cache_dir=CACHE_DIR)
 
+    # GPU setup
     available_gpus = torch.cuda.device_count()
     tensor_parallel_size = args.tensor_parallel_size or available_gpus
-
     if tensor_parallel_size > available_gpus:
-        print(f"Warning: Requested {tensor_parallel_size} GPUs but only {available_gpus} available")
         tensor_parallel_size = available_gpus
 
     print(f"Available GPUs: {available_gpus}")
     print(f"Using tensor_parallel_size: {tensor_parallel_size}")
 
-    # Configure vLLM LLM instance
-    model_kwargs = {
-        'model': args.model_name,
-        'tensor_parallel_size': tensor_parallel_size
-    }
-    model_kwargs['download_dir'] = CACHE_DIR
-
-    print("Loading model (this may take a few minutes for large models)...")
-    model = LLM(**model_kwargs)
+    # Model setup
+    print("Loading model...")
+    model = LLM(
+        model=args.model_name,
+        tensor_parallel_size=tensor_parallel_size,
+        download_dir=CACHE_DIR,
+        trust_remote_code=True
+    )
 
     sampling_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
-        max_tokens=256,  # or set dynamically if needed
+        max_tokens=args.max_tokens,
+        top_k=args.top_k,
         stop_token_ids=[tokenizer.eos_token_id]
     )
 
-    # Load input data (CSV with columns: context, instruction)
-    df = pd.read_csv(args.input_file)
-    if args.limit:
-        df = df.head(args.limit)
-
+    # Data setup
+    arrow_dataset = load_from_disk(args.input_file)
+    arrow_dataset = arrow_dataset.select(range(min(args.max_eval, len(arrow_dataset))))    
+    
     results = []
-    for idx, row in df.iterrows():
-        context = row.get('context', '')
-        instruction = row.get('instruction', '')
-        prompt = create_prompt(context, instruction)
-        outputs = model.generate([prompt], sampling_params)
-        sql = parse_sql(outputs[0].outputs[0].text)
-        results.append({
-            'idx': idx,
-            'context': context,
-            'instruction': instruction,
-            'sql': sql
-        })
-        print(f"Instance {idx}:\nPrompt: {prompt}\nSQL: {sql}\n---")
+    df_data = [] 
+    
+    chunk_size = args.chunk_size
+    eval_count = 0
 
-    # Save results to output file
-    with open(args.output_file, 'w', encoding='utf-8') as f:
+    try:
+        # Loop over the dataset in chunks
+        last_save_count = 0
+        for i in range(0, len(arrow_dataset), chunk_size):
+            
+            batch = arrow_dataset[i : i + chunk_size]
+            
+            # HF Dataset slicing gives a dict of lists
+            batch_contexts = batch['sql_context']
+            batch_prompts = batch['sql_prompt']
+            batch_ids = batch['id']
+            
+            formatted_prompts = []
+            
+            # Prepare prompts
+            for context, instruction in zip(batch_contexts, batch_prompts):
+                ar_prompt = create_prompt(context, instruction)
+                messages = [{"role": "user", "content": ar_prompt}]
+                
+                formatted_input = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False, 
+                    add_generation_prompt=True
+                )
+                formatted_prompts.append(formatted_input)
+            
+            time_start = time.time()
+            outputs = model.generate(formatted_prompts, sampling_params)
+            time_end = time.time()
+            
+            batch_time = time_end - time_start
+            avg_time_per_item = batch_time / len(outputs) if len(outputs) > 0 else 0
+            
+            # Process outputs
+            for j, output_item in enumerate(outputs):
+                generated_text = output_item.outputs[0].text
+                sql = parse_sql(generated_text)
+                
+                _id = batch_ids[j]
+                context = batch_contexts[j]
+                instruction = batch_prompts[j]
+                
+                results.append({
+                    'idx': i + j,
+                    'context': context,
+                    'instruction': instruction,
+                    'sql': sql,
+                    'generated_text': generated_text
+                })
+                
+                df_data.append([_id, sql, avg_time_per_item, generated_text])
+                
+                eval_count += 1
+            
+            # Autosave logic
+            # We check if we crossed a multiple of autosave_every
+            if save_path and (len(df_data) - last_save_count >= autosave_every):
+                temp_df = pd.DataFrame(df_data, columns=["id", "out_sql", "time_taken", "generated_text"])
+                atomic_save(save_path=save_path, df=temp_df)
+                print(f"Saved {len(df_data)} records...")
+                last_save_count = len(df_data)
+
+            if eval_count >= args.max_eval:
+                break
+            
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        raise
+    finally:
+        if save_path:
+            print("Saving final CSV results...")
+            final_df = pd.DataFrame(df_data, columns=["id", "out_sql", "time_taken", "generated_text"])
+            final_df.to_csv(save_path, index=False)
+
+    # Save JSON results to a DIFFERENT file
+    json_path = args.output_file.replace('.csv', '.jsonl')
+    if json_path == args.output_file: json_path += ".jsonl" # fallback if input wasn't .csv
+
+    print(f"Saving JSON results to {json_path}...")
+    with open(json_path, 'w', encoding='utf-8') as f:
         for r in results:
             f.write(json.dumps(r) + '\n')
+
+if __name__ == "__main__":
+    main()
