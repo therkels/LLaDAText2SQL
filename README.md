@@ -1,3 +1,38 @@
+
+# CSE 595 Project Description
+> **Note:** This project is a clone of another repository. All credit for the original code and design goes to the original authors. While new methods have been introduced, the base generation, masking methods, and visualization scripts were provided OOB by forking the repository. For example, `generate()` was a provided function we appended our SQL masking strategy to.
+
+For the CSE 595 Course project, our group took the original proposed LLaDA model, implemented with Torch, and expiremented with new ways to generate
+tokens and mask text for the Text2SQL task. Below is a summary of some of the edited files and directories and what purpose they served for the project!
+
+## Project File Overview
+
+
+### Key Files and Directories
+
+- **app.py** (provided): Main application entry point for running the project.
+- **chat.py** (provided): Handles chat-based interactions or interfaces.
+- **database_interface.py** (new!): Manages database connections and queries.
+- **generate.py** (provided), **generate_with_structure_enforcing.py** (modifed/): Scripts for generating SQL or text outputs. We extended these with our custom SQL masking strategy and structure-enforcing generation methods.
+- **process_raw_data.py** (new!): Preprocesses and cleans raw data for model input.
+- **eval_*.ipynb / eval_*.py** (new!): Notebooks and scripts for evaluating model performance and timing.
+- **dynamic_context/** (new!): Contains our added context prediction modules and related scripts for dynamic context-aware generation.
+- **strict_outputs/** (new!): Scripts and notebooks for analyzing and visualizing strict output formats, including our new evaluation and visualization tools.
+- **visualization/** (provided): Tools and scripts for generating visualizations and figures. We contributed new scripts for visualizing SQL generation and model outputs.
+- **opencompass/** (provided): Integration and evaluation scripts for the OpenCompass framework.
+- **imgs/** (provided): Visual assets and figures for documentation or analysis.
+- **requirements.txt / environment.yaml** (modified): Lists of required Python packages and environment setup.
+- **README.md** (modified): Project documentation and usage instructions.
+
+### Our Contributions
+
+- Developed and integrated a novel SQL masking strategy for Text2SQL tasks.
+- Added dynamic context prediction modules to improve context-aware generation.
+- Modified visualization scripts to debug/demonstrate SQL masking strategy.
+- Extended generation scripts to support structure-enforcing methods.
+
+
+
 # Large Language Diffusion Models
 [![arXiv](https://img.shields.io/badge/Paper-arXiv-red.svg)](https://arxiv.org/abs/2502.09992)
 [![deploy](https://img.shields.io/badge/Hugging%20Face-LLaDA_Base-FFEB3B)](https://huggingface.co/GSAI-ML/LLaDA-8B-Base)
